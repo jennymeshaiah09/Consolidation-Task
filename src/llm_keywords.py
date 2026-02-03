@@ -13,6 +13,7 @@ import json
 import re
 from .taxonomy import get_taxonomy, format_categories_for_llm
 from .normalization import extract_leaf_category
+from . import get_google_api_key
 
 
 class QuotaExceededError(Exception):
@@ -22,7 +23,7 @@ class QuotaExceededError(Exception):
 
 def get_gemini_client(model_name: str = "gemma-3-4b-it"):
     """Initialize Google Gemini client."""
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = get_google_api_key()
     if not api_key:
         return None
     genai.configure(api_key=api_key)
@@ -388,7 +389,7 @@ Return ONLY the JSON object."""
 
 
 def validate_api_key() -> bool:
-    return os.getenv("GOOGLE_API_KEY") is not None
+    return get_google_api_key() is not None
 
 
 def test_api_connection(model_name: str = "gemma-3-12b-it") -> tuple[bool, str]:

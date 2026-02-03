@@ -212,50 +212,60 @@ def validate_categories(consolidated_df: pd.DataFrame, product_type: str, is_tes
 def process_uploaded_file(uploaded_file, product_type: str):
     """Process the uploaded ZIP file and display results"""
 
-    # Read uploaded file
-    zip_bytes = BytesIO(uploaded_file.read())
+    # Skip re-processing if already done for this exact file and product type.
+    # Streamlit re-runs the script on every widget interaction (including button clicks),
+    # so the file uploader still holds the previous file — guard against redundant work.
+    if (st.session_state.get('phase_1_complete', False)
+            and st.session_state.get('_uploaded_file_name') == uploaded_file.name
+            and st.session_state.get('product_type') == product_type):
+        consolidated_df = st.session_state.consolidated_df
+        st.success(f"✅ Loaded {len(consolidated_df)} unique products (cached)")
+    else:
+        # Read uploaded file
+        zip_bytes = BytesIO(uploaded_file.read())
 
-    # Step 1: Load and parse files
-    with st.spinner("📂 Loading files from ZIP..."):
-        monthly_data, load_errors = load_monthly_data(zip_bytes)
+        # Step 1: Load and parse files
+        with st.spinner("📂 Loading files from ZIP..."):
+            monthly_data, load_errors = load_monthly_data(zip_bytes)
 
-    if load_errors:
-        st.error("**File Loading Errors:**")
-        for error in load_errors:
-            st.error(f"• {error}")
-        return
+        if load_errors:
+            st.error("**File Loading Errors:**")
+            for error in load_errors:
+                st.error(f"• {error}")
+            return
 
-    # Display loaded files
-    st.success(f"✅ Loaded {len(monthly_data)} monthly files")
+        # Display loaded files
+        st.success(f"✅ Loaded {len(monthly_data)} monthly files")
 
-    # Show which months were loaded
-    months_loaded = sorted(monthly_data.keys(), key=lambda x: get_month_order().index(x))
-    st.info(f"📅 Months loaded: {', '.join(months_loaded)}")
+        # Show which months were loaded
+        months_loaded = sorted(monthly_data.keys(), key=lambda x: get_month_order().index(x))
+        st.info(f"📅 Months loaded: {', '.join(months_loaded)}")
 
-    # Step 2: Validate files
-    with st.spinner("🔍 Validating data files..."):
-        is_valid, validation_errors = validate_all_files(monthly_data)
+        # Step 2: Validate files
+        with st.spinner("🔍 Validating data files..."):
+            is_valid, validation_errors = validate_all_files(monthly_data)
 
-    if not is_valid:
-        st.error("**Validation Errors:**")
-        for error in validation_errors:
-            st.error(f"• {error}")
-        return
+        if not is_valid:
+            st.error("**Validation Errors:**")
+            for error in validation_errors:
+                st.error(f"• {error}")
+            return
 
-    st.success("✅ All files validated successfully")
+        st.success("✅ All files validated successfully")
 
-    # Step 3: Consolidate data
-    with st.spinner("🔄 Consolidating data..."):
-        consolidated_df = consolidate_data(monthly_data, product_type)
+        # Step 3: Consolidate data
+        with st.spinner("🔄 Consolidating data..."):
+            consolidated_df = consolidate_data(monthly_data, product_type)
 
-    if consolidated_df.empty:
-        st.error("No data to consolidate. Please check your input files.")
-        return
+        if consolidated_df.empty:
+            st.error("No data to consolidate. Please check your input files.")
+            return
 
-    st.success(f"✅ Consolidated {len(consolidated_df)} unique products")
+        st.success(f"✅ Consolidated {len(consolidated_df)} unique products")
 
-    # Save to session state
-    save_consolidation_results(product_type, monthly_data, consolidated_df)
+        # Save to session state
+        save_consolidation_results(product_type, monthly_data, consolidated_df)
+        st.session_state['_uploaded_file_name'] = uploaded_file.name
 
     # Category Validation Section
     st.markdown("---")

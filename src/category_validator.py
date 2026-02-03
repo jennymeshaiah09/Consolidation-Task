@@ -8,13 +8,10 @@ Supports multiple validation strategies:
 3. Confidence-based - Only validate uncertain matches
 """
 
-import os
 import time
 from typing import List, Dict, Tuple
 import google.generativeai as genai
-from dotenv import load_dotenv
-
-load_dotenv()
+from . import get_google_api_key
 
 
 class CategoryValidator:
@@ -22,9 +19,9 @@ class CategoryValidator:
 
     def __init__(self, api_key: str = None):
         """Initialize the validator with Gemini API."""
-        self.api_key = api_key or os.getenv('GOOGLE_API_KEY')
+        self.api_key = api_key or get_google_api_key()
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+            raise ValueError("GOOGLE_API_KEY not found in environment variables or Streamlit secrets")
 
         genai.configure(api_key=self.api_key)
 
