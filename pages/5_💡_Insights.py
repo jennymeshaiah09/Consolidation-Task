@@ -137,9 +137,10 @@ def generate_insights_df(consolidated_df):
 def _write_all_data_sheet(writer, export_df):
     """Write the All Data sheet: specific column order + Yearly Heatmap formatting.
     
-    OPTIMIZED: Uses format caching, vectorized calculations, and a single merged
-    loop instead of 5 separate cell-by-cell passes. ~5-8× faster for large datasets.
+    Uses separate loops for heatmap, N/A formatting, and center-alignment.
+    Format objects are cached to avoid repeated creation.
     """
+    import re
     
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     years = [2023, 2024, 2025]
@@ -164,29 +165,40 @@ def _write_all_data_sheet(writer, export_df):
     # Popularity columns
     pop_cols = [f'Product Popularity {m}' for m in months]
     
-    # --- VECTORIZED YoY Calculation (replaces row-wise .apply()) ---
+    # --- YoY Calculation ---
     working_df = export_df.copy()
     
-    existing_2023 = [c for c in msv_cols_2023 if c in working_df.columns]
+    def calculate_yoy(row, current_cols, previous_cols):
+        """Calculate Year-over-Year change percentage."""
+        current_total = 0
+        previous_total = 0
+        for col in current_cols:
+            if col in row.index:
+                try:
+                    current_total += float(row[col]) if pd.notna(row[col]) else 0
+                except (ValueError, TypeError):
+                    pass
+        for col in previous_cols:
+            if col in row.index:
+                try:
+                    previous_total += float(row[col]) if pd.notna(row[col]) else 0
+                except (ValueError, TypeError):
+                    pass
+        if previous_total == 0:
+            return "100%" if current_total > 0 else "0%"
+        pct = ((current_total - previous_total) / previous_total * 100)
+        return f"{round(pct, 2)}%"
+    
     existing_2024 = [c for c in msv_cols_2024 if c in working_df.columns]
+    existing_2023 = [c for c in msv_cols_2023 if c in working_df.columns]
     existing_2025 = [c for c in msv_cols_2025 if c in working_df.columns]
     
-    total_2023 = working_df[existing_2023].apply(pd.to_numeric, errors='coerce').sum(axis=1) if existing_2023 else pd.Series(0, index=working_df.index)
-    total_2024 = working_df[existing_2024].apply(pd.to_numeric, errors='coerce').sum(axis=1) if existing_2024 else pd.Series(0, index=working_df.index)
-    total_2025 = working_df[existing_2025].apply(pd.to_numeric, errors='coerce').sum(axis=1) if existing_2025 else pd.Series(0, index=working_df.index)
-    
-    # YoY 2024: (2024 - 2023) / 2023 * 100
-    pct_2024 = ((total_2024 - total_2023) / total_2023.replace(0, float('nan')) * 100).round(2)
-    # Where prev was 0: if current is also 0 → "0%", else → "100%"
-    pct_2024 = pct_2024.fillna(0)
-    pct_2024 = pct_2024.where(total_2023 != 0, (total_2024 > 0).astype(float) * 100)
-    working_df['YoY MSV 2024'] = pct_2024.apply(lambda x: f"{x}%")
-    
-    # YoY 2025: (2025 - 2024) / 2024 * 100
-    pct_2025 = ((total_2025 - total_2024) / total_2024.replace(0, float('nan')) * 100).round(2)
-    pct_2025 = pct_2025.fillna(0)
-    pct_2025 = pct_2025.where(total_2024 != 0, (total_2025 > 0).astype(float) * 100)
-    working_df['YoY MSV 2025'] = pct_2025.apply(lambda x: f"{x}%")
+    working_df['YoY MSV 2024'] = working_df.apply(
+        lambda row: calculate_yoy(row, existing_2024, existing_2023), axis=1
+    )
+    working_df['YoY MSV 2025'] = working_df.apply(
+        lambda row: calculate_yoy(row, existing_2025, existing_2024), axis=1
+    )
     
     # --- Column ordering ---
     base_cols = [
@@ -220,6 +232,11 @@ def _write_all_data_sheet(writer, export_df):
     if 'Peak Popularity' in ordered_df.columns:
         ordered_df['Peak Popularity'] = ordered_df['Peak Popularity'].fillna('N/A').replace('', 'N/A')
     
+    # --- Sanitize illegal XML characters that corrupt .xlsx files ---
+    ILLEGAL_XML_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]')
+    for col in ordered_df.select_dtypes(include='object').columns:
+        ordered_df[col] = ordered_df[col].astype(str).apply(lambda x: ILLEGAL_XML_RE.sub('', x))
+    
     # Write base data to Excel
     sheet_name = 'All Data'
     LOGO_ROWS = 6
@@ -230,7 +247,7 @@ def _write_all_data_sheet(writer, export_df):
     num_rows = len(ordered_df)
     header_row = LOGO_ROWS
     
-    # --- PRE-CACHE all format objects (instead of creating per-cell) ---
+    # --- Format objects (cached, not created per-cell) ---
     format_cache = {}
     
     def get_heatmap_format(color):
@@ -266,77 +283,82 @@ def _write_all_data_sheet(writer, export_df):
         'valign': 'vcenter'
     })
     
-    # --- PRE-COMPUTE column indices and sets for fast lookup ---
     col_to_idx = {c: i for i, c in enumerate(final_cols)}
     all_msv_set = set(all_msv_cols_list) & set(final_cols)
-    
-    # Group MSV columns by year for heatmap
-    year_groups = []
-    for year_cols in [msv_cols_2023, msv_cols_2024, msv_cols_2025]:
-        existing = [c for c in year_cols if c in col_to_idx]
-        if existing:
-            year_groups.append(existing)
-    
-    # --- VECTORIZED min/max per row for each year group ---
-    year_row_stats = []
-    for year_cols in year_groups:
-        numeric_block = ordered_df[year_cols].apply(pd.to_numeric, errors='coerce')
-        row_mins = numeric_block.min(axis=1).values
-        row_maxs = numeric_block.max(axis=1).values
-        year_row_stats.append((year_cols, numeric_block.values, row_mins, row_maxs))
-    
-    # Peak Popularity column index
-    peak_pop_idx = col_to_idx.get('Peak Popularity', -1)
-    
-    # Non-MSV column indices (for center-alignment pass)
-    non_msv_col_indices = [(i, c) for i, c in enumerate(final_cols) if c not in all_msv_set]
     
     # --- Write headers ---
     for col_idx, col_name in enumerate(final_cols):
         worksheet.write(header_row, col_idx, col_name, header_format)
     
-    # --- SINGLE MERGED LOOP: heatmap + N/A + center-align ---
-    # Convert ordered_df to numpy for fast access
-    ordered_values = ordered_df.values
-    col_name_list = list(ordered_df.columns)
+    # --- Helper for row-level heatmap ---
+    def apply_row_color_coding(year_msv_cols):
+        """Apply Red-Yellow-Green heatmap for a set of MSV year columns."""
+        existing = [c for c in year_msv_cols if c in col_to_idx]
+        if not existing:
+            return
+        for row_idx in range(num_rows):
+            excel_row = row_idx + header_row + 1
+            # Get numeric values for this row across the year's months
+            row_vals = []
+            for col in existing:
+                cell_val = ordered_df.iloc[row_idx][col]
+                if cell_val == 'N/A' or (isinstance(cell_val, str) and cell_val.upper() == 'N/A'):
+                    row_vals.append(None)
+                else:
+                    try:
+                        row_vals.append(float(cell_val))
+                    except (ValueError, TypeError):
+                        row_vals.append(None)
+            
+            numeric_vals = [v for v in row_vals if v is not None]
+            if not numeric_vals:
+                continue
+            min_val = min(numeric_vals)
+            max_val = max(numeric_vals)
+            
+            for j, col in enumerate(existing):
+                col_idx_val = col_to_idx[col]
+                cell_val = ordered_df.iloc[row_idx][col]
+                
+                if cell_val == 'N/A' or (isinstance(cell_val, str) and cell_val.upper() == 'N/A'):
+                    worksheet.write(excel_row, col_idx_val, 'N/A', na_format)
+                    continue
+                
+                if row_vals[j] is not None:
+                    color = _get_color_for_value(row_vals[j], min_val, max_val)
+                    if color:
+                        worksheet.write(excel_row, col_idx_val, row_vals[j], get_heatmap_format(color))
+                    else:
+                        worksheet.write(excel_row, col_idx_val, row_vals[j], data_format)
+    
+    # --- Loop 1-3: Heatmap coloring per year ---
+    apply_row_color_coding(msv_cols_2023)
+    apply_row_color_coding(msv_cols_2024)
+    apply_row_color_coding(msv_cols_2025)
+    
+    # --- Loop 4: N/A formatting for all MSV + Peak Popularity columns ---
+    na_check_cols = list(all_msv_set)
+    if 'Peak Popularity' in col_to_idx:
+        na_check_cols.append('Peak Popularity')
     
     for row_idx in range(num_rows):
         excel_row = row_idx + header_row + 1
-        
-        # 1. Heatmap coloring for MSV year groups
-        for year_cols, numeric_vals, row_mins, row_maxs in year_row_stats:
-            min_val = row_mins[row_idx]
-            max_val = row_maxs[row_idx]
-            
-            for j, col in enumerate(year_cols):
-                col_idx = col_to_idx[col]
-                cell_val = ordered_values[row_idx, col_name_list.index(col)]
-                
-                # Check for N/A first
-                if cell_val == 'N/A' or (isinstance(cell_val, str) and cell_val.upper() == 'N/A'):
-                    worksheet.write(excel_row, col_idx, 'N/A', na_format)
-                    continue
-                
-                val = numeric_vals[row_idx, j]
-                if pd.notna(val):
-                    color = _get_color_for_value(val, min_val, max_val)
-                    if color:
-                        worksheet.write(excel_row, col_idx, val, get_heatmap_format(color))
-                    else:
-                        worksheet.write(excel_row, col_idx, val, data_format)
-        
-        # 2. N/A formatting for Peak Popularity
-        if peak_pop_idx >= 0:
-            pp_val = ordered_values[row_idx, peak_pop_idx]
-            if pp_val == 'N/A' or (isinstance(pp_val, str) and str(pp_val).upper() == 'N/A'):
-                worksheet.write(excel_row, peak_pop_idx, 'N/A', na_format)
-        
-        # 3. Center-align all non-MSV columns
-        for col_idx, col in non_msv_col_indices:
-            cell_val = ordered_values[row_idx, col_idx]
+        for col in na_check_cols:
+            col_idx_val = col_to_idx[col]
+            cell_val = ordered_df.iloc[row_idx][col]
+            if cell_val == 'N/A' or (isinstance(cell_val, str) and str(cell_val).upper() == 'N/A'):
+                worksheet.write(excel_row, col_idx_val, 'N/A', na_format)
+    
+    # --- Loop 5: Center-align all non-MSV columns ---
+    non_msv_cols = [c for c in final_cols if c not in all_msv_set]
+    for row_idx in range(num_rows):
+        excel_row = row_idx + header_row + 1
+        for col in non_msv_cols:
+            col_idx_val = col_to_idx[col]
+            cell_val = ordered_df.iloc[row_idx][col]
             if pd.isna(cell_val):
                 cell_val = ''
-            worksheet.write(excel_row, col_idx, cell_val, data_format)
+            worksheet.write(excel_row, col_idx_val, cell_val, data_format)
     
     # --- Auto-fit column widths ---
     for idx, col in enumerate(final_cols):
