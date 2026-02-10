@@ -46,10 +46,22 @@ def load_taxonomy(taxonomy_file: str = "Categories & subs.xlsx") -> Dict[str, pd
 
     # Get the path to the taxonomy file (in project root)
     project_root = Path(__file__).parent.parent
-    taxonomy_path = project_root / taxonomy_file
+    
+    # Check potential locations
+    possible_paths = [
+        project_root / taxonomy_file,
+        project_root / "Examples" / taxonomy_file,
+        project_root / "data" / taxonomy_file
+    ]
+    
+    taxonomy_path = None
+    for path in possible_paths:
+        if path.exists():
+            taxonomy_path = path
+            break
 
-    if not taxonomy_path.exists():
-        raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_path}")
+    if taxonomy_path is None:
+        raise FileNotFoundError(f"Taxonomy file not found in: {[str(p) for p in possible_paths]}")
 
     xl = pd.ExcelFile(taxonomy_path)
 
@@ -200,12 +212,19 @@ def load_categories_for_product_type(product_type: str) -> List[str]:
         List of category names for the specific product type
     """
     try:
-        # Import generated keywords
         from .generated_keywords import CATEGORY_KEYWORDS
 
-        # For now, return all categories (TODO: filter by product type)
-        all_categories = list(CATEGORY_KEYWORDS.keys())
-        return sorted(all_categories)
+        mapped_type = SHEET_MAPPING.get(product_type, product_type)
+        product_categories = CATEGORY_KEYWORDS.get(mapped_type, {})
+
+        # Extract leaf categories (Level 2 and Level 3) — skip Level 1 (too broad)
+        categories = set()
+        for full_path in product_categories.keys():
+            parts = full_path.split(" > ")
+            for part in parts[1:]:
+                categories.add(part.strip())
+
+        return sorted(list(categories))
 
     except ImportError:
         # Fallback: Load from Excel taxonomy for specific product type

@@ -26,7 +26,7 @@ class CategoryValidator:
         genai.configure(api_key=self.api_key)
 
         # Use the same model as keyword generation for consistency
-        self.model = genai.GenerativeModel('gemma-3-4b-it')
+        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
     def validate_categories_batch(
         self,

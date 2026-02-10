@@ -21,7 +21,8 @@ from utils.ui_components import (
 from utils.state_manager import (
     init_session_state,
     check_phase_prerequisites,
-    get_consolidated_df
+    get_consolidated_df,
+    save_pipeline_state
 )
 
 # Page configuration
@@ -85,6 +86,126 @@ def calculate_peak_seasonality(row):
     return ", ".join(peak_month_names)
 
 
+def calculate_true_peak(row):
+    """
+    Calculate True Peak using comprehensive 7-step algorithm.
+    
+    Steps:
+    1. Monthly Average MSV (across 3 years per month)
+    2. Z-Score for each month
+    3. Monthly YoY Growth (avg of 2024 vs 2023 and 2025 vs 2024)
+    4. Normalize Avg YoY
+    5. Consistency Check (both YoY positive = 1, else 0)
+    6. True Peak Score = (Z-Score × 0.4) + (Normalized YoY × 0.4) + (Consistency × 0.2)
+    7. Select months with score > 0.5, max 3, or single highest
+    
+    Returns: comma-separated list of 1-3 peak months
+    """
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    years = [2023, 2024, 2025]
+    
+    # Get MSV values for all months/years (treat blank as 0)
+    msv_data = {}  # {month: {year: value}}
+    for month in month_names:
+        msv_data[month] = {}
+        for year in years:
+            col = f"{month} {year}"
+            if col in row.index and pd.notna(row[col]):
+                try:
+                    msv_data[month][year] = float(row[col])
+                except (ValueError, TypeError):
+                    msv_data[month][year] = 0
+            else:
+                msv_data[month][year] = 0
+    
+    # Step 1: Monthly Average MSV
+    monthly_averages = {}
+    for month in month_names:
+        values = [msv_data[month].get(year, 0) for year in years]
+        monthly_averages[month] = sum(values) / len(values)
+    
+    # Check if all averages are 0
+    if all(avg == 0 for avg in monthly_averages.values()):
+        return ""
+    
+    # Step 2: Z-Score for each month
+    avg_values = list(monthly_averages.values())
+    mean = sum(avg_values) / len(avg_values)
+    
+    variance = sum((x - mean) ** 2 for x in avg_values) / len(avg_values)
+    std_dev = variance ** 0.5
+    
+    z_scores = {}
+    for month, avg in monthly_averages.items():
+        if std_dev == 0:
+            z_scores[month] = 0
+        else:
+            z_scores[month] = (avg - mean) / std_dev
+    
+    # Step 3: Monthly YoY Growth
+    avg_yoy = {}
+    for month in month_names:
+        # YoY 2024 = (2024 - 2023) / 2023 * 100
+        val_2023 = msv_data[month].get(2023, 0)
+        val_2024 = msv_data[month].get(2024, 0)
+        val_2025 = msv_data[month].get(2025, 0)
+        
+        if val_2023 == 0:
+            yoy_2024 = 0
+        else:
+            yoy_2024 = ((val_2024 - val_2023) / val_2023) * 100
+        
+        if val_2024 == 0:
+            yoy_2025 = 0
+        else:
+            yoy_2025 = ((val_2025 - val_2024) / val_2024) * 100
+        
+        avg_yoy[month] = (yoy_2024 + yoy_2025) / 2
+    
+    # Step 4: Normalize Avg YoY
+    max_avg_yoy = max(avg_yoy.values()) if avg_yoy else 0
+    
+    normalized_yoy = {}
+    for month, yoy in avg_yoy.items():
+        if max_avg_yoy == 0:
+            normalized_yoy[month] = 0
+        else:
+            normalized_yoy[month] = yoy / max_avg_yoy
+    
+    # Step 5: Consistency Check
+    consistency = {}
+    for month in month_names:
+        val_2023 = msv_data[month].get(2023, 0)
+        val_2024 = msv_data[month].get(2024, 0)
+        val_2025 = msv_data[month].get(2025, 0)
+        
+        # Check if YoY is positive for both years
+        yoy_2024_positive = val_2024 > val_2023
+        yoy_2025_positive = val_2025 > val_2024
+        
+        consistency[month] = 1 if (yoy_2024_positive and yoy_2025_positive) else 0
+    
+    # Step 6: True Peak Score
+    true_peak_scores = {}
+    for month in month_names:
+        score = (z_scores[month] * 0.4) + (normalized_yoy[month] * 0.4) + (consistency[month] * 0.2)
+        true_peak_scores[month] = score
+    
+    # Step 7: Select True Peak Months
+    # Get months with score > 0.5
+    high_score_months = [(month, score) for month, score in true_peak_scores.items() if score > 0.5]
+    
+    if high_score_months:
+        # Sort by score descending and take top 3
+        high_score_months.sort(key=lambda x: x[1], reverse=True)
+        peak_months = [month for month, _ in high_score_months[:3]]
+        return ", ".join(peak_months)
+    else:
+        # No month above 0.5 - take single highest scoring month
+        highest_month = max(true_peak_scores.items(), key=lambda x: x[1])[0]
+        return highest_month
+
+
 def merge_msv_data(consolidated_df, msv_df):
     """
     Merge MSV data with consolidated data.
@@ -97,37 +218,72 @@ def merge_msv_data(consolidated_df, msv_df):
         Merged DataFrame with MSV data
     """
 
-    # Identify the join key in MSV data
-    join_key = None
-    if 'Product Key' in msv_df.columns:
-        join_key = 'Product Key'
-    elif 'Product Title' in msv_df.columns:
-        join_key = 'Product Title'
-    else:
-        raise ValueError("MSV file must contain 'Product Key' or 'Product Title' column")
+    consolidated_df = consolidated_df.copy()
 
-    # Check if Product Key exists in consolidated data
-    if join_key not in consolidated_df.columns:
-        if join_key == 'Product Key':
-            raise ValueError("Consolidated data does not have 'Product Key' column. Cannot merge MSV data.")
-        else:
-            # Use Product Title as fallback
-            join_key = 'Product Title'
+    # Pick the first join key that exists in BOTH dataframes
+    join_key = None
+    for candidate in ('Product Key', 'Product Title', 'Product Keyword'):
+        if candidate in msv_df.columns and candidate in consolidated_df.columns:
+            join_key = candidate
+            break
+
+    if join_key is None:
+        raise ValueError(
+            "MSV file must contain 'Product Key', 'Product Title', or 'Product Keyword' "
+            "column that also exists in the consolidated data."
+        )
+
+    # Make re-merge idempotent: drop columns that will come from MSV (except join key)
+    # and any leftover _msv-suffixed columns from a previous merge.
+    incoming = {c for c in msv_df.columns if c != join_key}
+    stale = [c for c in consolidated_df.columns
+             if c in incoming or c.endswith('_msv')]
+    if stale:
+        consolidated_df = consolidated_df.drop(columns=stale, errors='ignore')
 
     st.info(f"Merging MSV data using '{join_key}' as the join key...")
 
-    # Merge on the join key
-    merged_df = consolidated_df.merge(
-        msv_df,
-        on=join_key,
-        how='left',
-        suffixes=('', '_msv')
-    )
+    if join_key == 'Product Keyword':
+        # Google Ads exports keywords in lowercase; consolidated data uses Title Case.
+        # Merge on a temporary lowercase key, then drop it.  Also drop the MSV file's
+        # Product Keyword so we keep our Title-Case version in consolidated_df.
+        _cons = consolidated_df.copy()
+        _msv  = msv_df.drop(columns=['Product Keyword']).copy()
+        _cons['_join_lower'] = _cons['Product Keyword'].astype(str).str.lower().str.strip()
+        _msv['_join_lower']  = msv_df['Product Keyword'].astype(str).str.lower().str.strip()
+        merged_df = _cons.merge(_msv, on='_join_lower', how='left', suffixes=('', '_msv'))
+        merged_df = merged_df.drop(columns=['_join_lower'])
+    else:
+        merged_df = consolidated_df.merge(
+            msv_df,
+            on=join_key,
+            how='left',
+            suffixes=('', '_msv')
+        )
 
-    # Calculate Peak Seasonality if not present
-    if 'Peak Seasonality' not in merged_df.columns or merged_df['Peak Seasonality'].isna().all():
+    # Calculate (or Recalculate) Peak Seasonality if missing or empty
+    should_calculate = False
+    
+    if 'Peak Seasonality' not in merged_df.columns:
+        should_calculate = True
+    else:
+        # Check if it's effectively empty (all NaN or empty strings)
+        non_empty = merged_df['Peak Seasonality'].astype(str).str.strip().replace('nan', '').replace('None', '')
+        if (non_empty == '').all():
+            should_calculate = True
+
+    if should_calculate:
         st.info("Calculating Peak Seasonality from MSV monthly data...")
-        merged_df['Peak Seasonality'] = merged_df.apply(calculate_peak_seasonality, axis=1)
+        # Ensure we have month columns before trying
+        sample_cols = [c for c in merged_df.columns if 'Jan 20' in str(c) or 'Dec 20' in str(c)]
+        if sample_cols:
+            merged_df['Peak Seasonality'] = merged_df.apply(calculate_peak_seasonality, axis=1)
+            
+            # Calculate True Peak using comprehensive algorithm
+            st.info("Calculating True Peak (Z-score + YoY growth + consistency)...")
+            merged_df['True Peak'] = merged_df.apply(calculate_true_peak, axis=1)
+        else:
+            st.warning("Could not calculate Peak Seasonality: No monthly MSV columns (e.g. 'Jan 2023') found.")
 
     return merged_df
 
@@ -150,10 +306,22 @@ def normalize_date_columns(df):
         7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'
     }
 
+    month_name_set = set(month_names.values())  # {'Jan', 'Feb', ...}
+
     # Find and rename datetime columns
     rename_map = {}
     for col in df.columns:
         col_str = str(col)
+
+        # Handle Mon-YY format from Google Ads (e.g., Jan-23 → Jan 2023)
+        parts = col_str.split('-')
+        if (len(parts) == 2
+                and parts[0] in month_name_set
+                and parts[1].isdigit()
+                and len(parts[1]) == 2):
+            year = 2000 + int(parts[1])
+            rename_map[col] = f"{parts[0]} {year}"
+            continue
 
         # Try to parse as datetime
         try:
@@ -165,14 +333,17 @@ def normalize_date_columns(df):
                 year = dt.year
                 new_name = f"{month_name} {year}"
                 rename_map[col] = new_name
-            elif isinstance(col, str) and (col_str.count('-') == 2 or col_str.count('/') == 2):
-                # Try parsing string column name
+            elif isinstance(col, str):
+                # Try parsing string column name (JANUARY-2023, Jan-23, etc.)
+                # We skip things that look like plain text but check if pandas sees a date
                 dt = pd.to_datetime(col_str, errors='coerce')
                 if pd.notna(dt):
                     month_name = month_names[dt.month]
                     year = dt.year
                     new_name = f"{month_name} {year}"
-                    rename_map[col] = new_name
+                    # Only rename if it actually looks like a monthly date (ignore "Product Keyword which might parse if weird")
+                    if year >= 2000 and year <= 2030:
+                        rename_map[col] = new_name
         except:
             continue
 
@@ -180,6 +351,22 @@ def normalize_date_columns(df):
         st.info(f"🔄 Auto-detected {len(rename_map)} datetime-formatted columns. Converting to 'Mon YYYY' format...")
         df = df.rename(columns=rename_map)
 
+    return df
+
+
+def normalize_google_ads_columns(df):
+    """
+    Detect and rename Google Ads Keyword Planner export columns to match our schema.
+    Keyword → Product Keyword, Monthly Search Estimated → Product Keyword Avg MSV.
+    """
+    rename_map = {}
+    if 'Keyword' in df.columns and 'Product Keyword' not in df.columns:
+        rename_map['Keyword'] = 'Product Keyword'
+    if 'Monthly Search Estimated' in df.columns and 'Product Keyword Avg MSV' not in df.columns:
+        rename_map['Monthly Search Estimated'] = 'Product Keyword Avg MSV'
+    if rename_map:
+        df = df.rename(columns=rename_map)
+        st.info(f"🔄 Google Ads format detected. Renamed: {rename_map}")
     return df
 
 
@@ -193,10 +380,12 @@ def validate_msv_file(df):
     errors = []
     warnings = []
 
-    # Check for required columns
-    has_product_key = 'Product Key' in df.columns or 'Product Title' in df.columns
+    # Check for required columns (join key)
+    has_product_key = ('Product Key' in df.columns
+                       or 'Product Title' in df.columns
+                       or 'Product Keyword' in df.columns)
     if not has_product_key:
-        errors.append("File must contain 'Product Key' or 'Product Title' column")
+        errors.append("File must contain 'Product Key', 'Product Title', or 'Product Keyword' column")
 
     # Check for MSV columns
     has_avg_msv = 'Product Keyword Avg MSV' in df.columns
@@ -291,10 +480,14 @@ def main():
         st.info("""
         **File Requirements:**
         - Format: Excel (.xlsx) or CSV (.csv)
-        - Must contain: `Product Key` or `Product Title` column
+        - Must contain a join key: `Product Key`, `Product Title`, or `Product Keyword`
+        - **Google Ads Keyword Planner exports are supported directly** — `Keyword` and
+          `Monthly Search Estimated` are auto-renamed, and `Jan-23` date columns are
+          converted to `Jan 2023`. The merge uses a case-insensitive keyword match.
         - Recommended columns:
           - `Product Keyword Avg MSV` - Average monthly search volume
           - Monthly columns: `Jan 2023`, `Feb 2023`, ..., `Dec 2025` (36 months)
+            OR short format: `Jan-23`, `Feb-23`, etc. (auto-converted)
             OR datetime format: `2023-01-01`, `2023-02-01`, etc. (auto-converted)
           - `Peak Seasonality` (optional, will be calculated if not provided)
         """)
@@ -315,7 +508,10 @@ def main():
 
                 st.success(f"✅ File loaded: {len(msv_df)} products found")
 
-                # Normalize date columns (convert datetime format to "Jan 2023" format)
+                # Detect and rename Google Ads Keyword Planner columns
+                msv_df = normalize_google_ads_columns(msv_df)
+
+                # Normalize date columns (Mon-YY / datetime → "Jan 2023" format)
                 msv_df = normalize_date_columns(msv_df)
 
                 # Validate file structure
@@ -346,8 +542,9 @@ def main():
                                 # Merge data
                                 merged_df = merge_msv_data(consolidated_df, msv_df)
 
-                                # Update session state
+                                # Update session state and persist to disk
                                 st.session_state.consolidated_df = merged_df
+                                save_pipeline_state()
 
                                 st.success(f"✅ MSV data merged successfully!")
                                 st.success(f"✅ Peak Seasonality calculated for all products")

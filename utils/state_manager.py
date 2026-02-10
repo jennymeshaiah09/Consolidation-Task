@@ -3,10 +3,65 @@ Session State Manager
 Handles state persistence across pages
 """
 
+import os
+import json
+
 import streamlit as st
 import pandas as pd
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+# ---------------------------------------------------------------------------
+# File-based cache — survives page refreshes / browser reloads
+# ---------------------------------------------------------------------------
+_CACHE_DIR  = os.path.join(os.path.dirname(__file__), '..')
+_CACHE_CSV  = os.path.join(_CACHE_DIR, 'pipeline_cache.csv')
+_CACHE_META = os.path.join(_CACHE_DIR, 'pipeline_cache_meta.json')
+
+_META_KEYS = (
+    'product_type',
+    'phase_1_complete', 'phase_2_complete',
+    'total_products', 'categories_count', 'keywords_generated',
+)
+
+
+def _persist():
+    """Write consolidated_df + key metadata to disk."""
+    df = st.session_state.get('consolidated_df')
+    if df is None:
+        return
+    try:
+        df = df.loc[:, ~df.columns.duplicated(keep='first')]
+        df.to_csv(_CACHE_CSV, index=False)
+        meta = {k: st.session_state.get(k) for k in _META_KEYS}
+        with open(_CACHE_META, 'w') as f:
+            json.dump(meta, f)
+    except Exception:
+        pass
+
+
+def _restore():
+    """Silently reload session from disk when session is empty."""
+    if st.session_state.get('phase_1_complete'):
+        return  # session already populated
+    if not (os.path.exists(_CACHE_CSV) and os.path.exists(_CACHE_META)):
+        return
+    try:
+        df = pd.read_csv(_CACHE_CSV)
+        df = df.loc[:, ~df.columns.duplicated(keep='first')]
+        with open(_CACHE_META, 'r') as f:
+            meta = json.load(f)
+        st.session_state['consolidated_df'] = df
+        for key in _META_KEYS:
+            if key in meta:
+                st.session_state[key] = meta[key]
+    except Exception:
+        pass  # corrupted cache — ignore, user can re-run Phase 1
+
+
+# Public alias so Phase 3 (or any page) can trigger a save after
+# modifying consolidated_df directly.
+save_pipeline_state = _persist
 
 
 def init_session_state():
@@ -38,6 +93,9 @@ def init_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
+    # Attempt to restore from disk if this is a fresh session
+    _restore()
+
 
 def save_consolidation_results(
     product_type: str,
@@ -56,6 +114,8 @@ def save_consolidation_results(
     if 'Product Category L3' in consolidated_df.columns:
         st.session_state.categories_count = consolidated_df['Product Category L3'].nunique()
 
+    _persist()
+
 
 def save_keyword_results(updated_df: pd.DataFrame):
     """Save Phase 2 keyword generation results to session state"""
@@ -66,6 +126,8 @@ def save_keyword_results(updated_df: pd.DataFrame):
     # Count keywords generated
     if 'Product Keyword' in updated_df.columns:
         st.session_state.keywords_generated = (updated_df['Product Keyword'] != '').sum()
+
+    _persist()
 
 
 def check_phase_prerequisites(phase_num: int) -> tuple[bool, str]:
@@ -158,9 +220,16 @@ def get_session_stats() -> Optional[Dict[str, Any]]:
 
 
 def clear_session_data():
-    """Clear all session data (useful for starting fresh)"""
+    """Clear all session data and on-disk cache (useful for starting fresh)"""
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    # Remove persisted cache so _restore() won't bring it back
+    for path in (_CACHE_CSV, _CACHE_META):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
     init_session_state()
 
 

@@ -3,8 +3,8 @@
 ## Project Overview
 A Streamlit application that consolidates monthly product data (Jan-Dec 2025) from multiple files, enriches products with LLM-generated keywords, and outputs a unified Excel report.
 
-**Last Updated:** 2026-02-02 (Session 8 - MSV Keyword Optimization)
-**Overall Progress:** 100% Complete (+ MSV Optimization)
+**Last Updated:** 2026-02-05 (Session 10 - Codebase Audit & Known Issues Documentation)
+**Overall Progress:** 100% Complete (+ Persistence + Upload Shortcut)
 
 ---
 
@@ -291,6 +291,18 @@ A Streamlit application that consolidates monthly product data (Jan-Dec 2025) fr
 2. **MSV Data** - Currently manual upload via Excel/CSV (automated API pending approval)
 3. **Peak Seasonality** - Calculated from uploaded MSV monthly data
 
+#### 🐛 Code-Level Bugs & Gaps (identified 2026-02-05)
+4. **Missing `rapidfuzz` in `requirements.txt`** — `src/taxonomy_classifier.py` imports `rapidfuzz` but it is not listed as a dependency. Will crash on first import in a fresh environment.
+5. **Unreachable code in `src/llm_keywords.py` (lines 504–513)** — A duplicated `except` block appears after a `continue` statement, making it dead code. The exception is already caught and handled above.
+6. **`validate_categories()` is a stub** — `pages/1_📊_Data_Consolidation.py` defines this function with only a docstring and a `# TODO` comment. It is called on two paths but does nothing. Category validation is silently skipped in Phase 1.
+7. **Unimplemented TODO in `src/taxonomy.py`** — `load_categories_for_product_type()` has a `# TODO: filter by product type` comment but returns the full 866-category list regardless of the `product_type` argument. Downstream classification works around this via its own filtering, but the function contract is misleading.
+8. **Duplicated accent normalization** — `src/rake_keywords.py:normalize_accents()` and `src/keyword_preprocessor.py:normalize_accents_safe()` are near-identical. If one is updated the other will drift.
+9. **Duplicated accessory-detection block** — `src/normalization.py` contains the same ~30-line accessory-detection logic copy-pasted into both `classify_category()` and `classify_category_levels()`.
+10. **`thinking_config` incompatibility in `llm_parallel.py`** — The standalone CLI script passes `thinking_config` inside the `generation_config` dict. SDK 0.8.4 does not support it there (the main pipeline in `src/llm_keywords.py` works around this with a separate kwarg). `llm_parallel.py` will silently ignore or error on 2.5-series models.
+11. **OAuth client-secret JSON in repo root** — `client_secret_860718213431-*.json` contains Google OAuth credentials and sits in the repo root. It is not covered by `.gitignore`.
+12. **Cache / artifact files missing from `.gitignore`** — `pipeline_cache.csv`, `pipeline_cache_meta.json`, and `keyword_cache.csv` are documented as auto-generated (Session 9) but are not listed in `.gitignore`. They currently exist on disk and will be committed if `git add .` is used.
+13. **`app.py` is legacy dead code** — The original single-page Streamlit app predates the multi-page pipeline (Phases 1–6). It is not referenced anywhere and can be safely removed.
+
 ---
 
 ## Testing Checklist
@@ -427,25 +439,31 @@ Consolidation Task/
 ├── debug_columns.py                  # Debug script for column detection
 ├── pages/
 │   ├── 1_📊_Data_Consolidation.py   # Phase 1: Upload & consolidate (+ validation)
-│   ├── 2_🔤_Keywords_Categories.py  # Phase 2: Generate keywords (RAKE & LLM)
+│   ├── 2_🔤_Keywords_Categories.py  # Phase 2: Generate keywords (RAKE / LLM / Upload CSV)
 │   ├── 3_📈_MSV_Management.py       # Phase 3: MSV data upload & integration
 │   ├── 4_⭐_Peak_Analysis.py        # Phase 4: Peak Popularity analysis
-│   └── 5_💡_Insights.py              # Phase 5: Final insights & export
+│   ├── 5_💡_Insights.py             # Phase 5: Final insights & export (placeholder)
+│   └── 6_🔑_Keyword_Generator.py    # Phase 6: Standalone keyword tool (+ cache)
 ├── utils/
 │   ├── ui_components.py             # Streamlit UI utilities
-│   └── state_manager.py             # Session state management
-└── src/
-    ├── __init__.py
-    ├── ingestion.py                 # File loading & parsing
-    ├── validation.py                # Column & data validation
-    ├── normalization.py             # Product key & category classification (+ accessory detection)
-    ├── keyword_generator.py         # Auto-generates keywords from Excel (+ brand keywords)
-    ├── generated_keywords.py        # Auto-generated keyword dictionary (866 categories)
-    ├── taxonomy.py                  # Taxonomy loader and utilities (+ product-type specific loading)
-    ├── consolidation.py             # Pandas merge pipeline
-    ├── llm_keywords.py              # Google Gemini keyword generation & category fallback
-    ├── rake_keywords.py             # RAKE algorithm for fast keyword extraction (NEW)
-    └── category_validator.py        # LLM-based category validation (Session 6)
+│   └── state_manager.py             # Session state + file-based persistence (Session 9)
+├── src/
+│   ├── __init__.py                  # Package init + Google API key resolver
+│   ├── ingestion.py                 # File loading & parsing
+│   ├── validation.py                # Column & data validation
+│   ├── normalization.py             # Product key & category classification (+ accessory detection)
+│   ├── keyword_generator.py         # Auto-generates keywords from Excel (+ brand keywords)
+│   ├── generated_keywords.py        # Auto-generated keyword dictionary (866 categories)
+│   ├── taxonomy.py                  # Taxonomy loader and utilities (+ product-type specific loading)
+│   ├── consolidation.py             # Pandas merge pipeline
+│   ├── llm_keywords.py              # Google Gemini keyword generation & category fallback
+│   ├── rake_keywords.py             # RAKE algorithm for fast keyword extraction
+│   ├── keyword_preprocessor.py      # Hybrid keyword extraction (Brand + Type + Differentiator)
+│   └── category_validator.py        # LLM-based category validation (Session 6)
+└── [auto-generated / gitignored]
+    ├── pipeline_cache.csv           # Main pipeline df snapshot (Session 9)
+    ├── pipeline_cache_meta.json     # Phase flags + metadata (Session 9)
+    └── keyword_cache.csv            # Phase 6 keyword snapshot (Session 9)
 ```
 
 ---
@@ -809,14 +827,16 @@ is_pet_accessory = has collar/leash/toy AND NOT food
 | Category Validation | 100% | ✅ Complete (Session 6) |
 | Consolidation | 100% | ✅ Complete |
 | LLM Keywords & Fallback | 100% | ✅ Complete |
-| MSV Upload & Integration | 100% | ✅ Complete (Manual) |
+| MSV Upload & Integration | 100% | ✅ Complete (Manual + Phase 2 upload shortcut) |
 | Peak Seasonality Calculation | 100% | ✅ Complete |
+| Pipeline Persistence | 100% | ✅ Complete (Session 9) |
+| Phase 6 Keyword Cache | 100% | ✅ Complete (Session 9) |
 | Google Ads API Setup | 90% | 🔄 Awaiting MCC Account |
 | MSV Lookup Integration | 0% | ⏳ Pending API Setup |
 | Streamlit UI | 100% | ✅ Complete |
 | Testing | 100% | ✅ Complete (80.6% accuracy) |
 | Documentation | 100% | ✅ Complete |
-| **Overall** | **100%** | ✅ **COMPLETE** (+ New Features) |
+| **Overall** | **100%** | ✅ **COMPLETE** (+ Persistence + Upload Shortcut) |
 
 ---
 
@@ -1299,6 +1319,75 @@ The Keywords page now shows:
 
 ---
 
+### Session 9 (2026-02-04)
+**Duration:** ~2 hours
+**Progress:** Maintained at 100% (Pipeline Persistence + Upload Shortcut)
+
+**Problem Solved:**
+The main pipeline (Phase 1 → Phase 2 → Phase 3) stored everything in `st.session_state` only.
+Between Phase 2 (keywords) and Phase 3 (MSV from Tenny), a page refresh wiped all data.
+Phase 6 (standalone keyword generator) had the same issue independently.
+
+**Completed:**
+
+1. ✅ **LLM Prompt Refinement (all 3 prompt locations)**
+   - Added BRAND WARNING rule: producer/estate names (e.g. Château d'Esclans) dropped when title has the consumer brand (e.g. Whispering Angel)
+   - Added Whispering Angel example to all prompts
+   - Added `Rose` to the product-types-to-always-keep list
+   - Expanded DROP list: `single malt, blended, dry, smooth, rich, delicate, finest, authentic, natural, real, true, great, extra` + geography expanded with `Kentucky, Irish, London, Italian, Spanish`
+   - Age rule changed: drop entirely, not even abbreviated
+   - Added `.title()` to `process_single` post-processing pipeline (after `& → And` → strip non-alphanumeric → collapse whitespace)
+
+2. ✅ **Phase 6 Keyword Cache (`keyword_cache.csv`)**
+   - After LLM generation completes, `result_df` auto-saves to `keyword_cache.csv`
+   - On next file upload, merge detects cached keywords by `Product Title` and shows a banner: "X/Y products have cached keywords — Load or Clear"
+   - Cache is opt-in: user must click "Load Cached Keywords". "Generate" always calls LLM fresh
+   - "Clear Cache" button deletes the file
+
+3. ✅ **Pipeline Persistence (`pipeline_cache.csv` + `pipeline_cache_meta.json`)**
+   - `utils/state_manager.py` now writes `consolidated_df` to `pipeline_cache.csv` and phase metadata to `pipeline_cache_meta.json` on every save
+   - `init_session_state()` calls `_restore()` on every page load — if session is empty but cache files exist, state is silently rebuilt
+   - Save hooks added at three points:
+     - `save_consolidation_results()` — after Phase 1
+     - `save_keyword_results()` — after Phase 2
+     - `save_pipeline_state()` — after Phase 3 MSV merge (new public export)
+   - `clear_session_data()` now also deletes cache files so "start fresh" is clean
+
+4. ✅ **Phase 2 Upload CSV Shortcut**
+   - Added `📤 Upload CSV` as a third keyword-generation mode alongside RAKE and LLM
+   - Accepts CSV or Excel with `Product Title` + `Product Keyword` (required)
+   - Auto-detects MSV columns (Avg MSV, monthly `Mon YYYY` columns, Peak Seasonality) and shows a summary before merge
+   - Merge logic: only imports columns that are new to `consolidated_df`, plus always overwrites `Product Keyword`. Existing consolidated columns (categories, popularity, brand) are untouched
+   - If MSV columns were present, shows "skip Phase 3" confirmation
+   - Calls `save_keyword_results()` → persistence kicks in automatically
+
+**Files Modified:**
+- `utils/state_manager.py` — persist/restore layer (`_persist`, `_restore`, `save_pipeline_state`)
+- `pages/2_🔤_Keywords_Categories.py` — Upload CSV mode in `render_keyword_generation()`
+- `pages/3_📈_MSV_Management.py` — imported `save_pipeline_state`, called after MSV merge
+- `src/llm_keywords.py` — prompt refinements in `generate_batch_keywords_api` and `process_single`
+- `pages/6_🔑_Keyword_Generator.py` — keyword cache check + auto-save + diagnostic prompt update
+
+**Auto-Generated Files (gitignored):**
+- `pipeline_cache.csv` — consolidated_df snapshot (survives refreshes)
+- `pipeline_cache_meta.json` — phase flags + product_type metadata
+- `keyword_cache.csv` — Phase 6 keyword results snapshot
+
+**Two Workflow Paths Now Available:**
+
+| Path | When to use |
+|------|-------------|
+| Phase 1 → Phase 2 (LLM/RAKE) → wait for Tenny → Phase 3 (MSV upload) → Phase 4 | Normal flow. Pipeline cache keeps data alive across refreshes during the wait. |
+| Phase 1 → Phase 2 (Upload CSV with keywords + MSV) → Phase 4 directly | Backup / pre-filled. Single upload brings in both keywords and MSV, skips Phase 3. |
+
+**Key Design Decisions:**
+- Persistence is silent — no banners or buttons on restore. The app just works after a refresh.
+- Phase 6 cache is opt-in (banner + button) because it's a standalone tool where the user may want fresh generation.
+- Upload merge is additive-only: it never overwrites columns that already exist in consolidated_df (except `Product Keyword`). This prevents accidental data loss.
+- `save_pipeline_state` is exported as a public function so any page can trigger a persist after directly modifying `consolidated_df`.
+
+---
+
 ## Outstanding Tasks
 
 ### Immediate
@@ -1311,16 +1400,32 @@ The Keywords page now shows:
 - [x] Integrate MSV data into consolidation pipeline (Session 8 - Manual Upload)
 - [x] Calculate Peak Seasonality from MSV historical data (Session 8)
 - [x] Optimize keywords for MSV (Session 8 - 11 critical issues fixed)
+- [x] Pipeline persistence across page refreshes (Session 9)
+- [x] Phase 2 Upload CSV shortcut for pre-filled keywords + MSV (Session 9)
+- [x] Phase 6 keyword cache for standalone tool (Session 9)
 - [ ] Test MSV-optimized keywords with Google Keyword Planner
 - [ ] Measure actual zero-MSV rate reduction (baseline: 46.4%, target: <10%)
 - [ ] Monitor category validation accuracy at scale
 - [ ] Fine-tune validation prompt based on production results
+
+### Code Quality / Bug Fixes (from 2026-02-05 audit)
+- [ ] Add `rapidfuzz` to `requirements.txt`
+- [ ] Remove unreachable `except` block in `src/llm_keywords.py` lines 504–513
+- [ ] Implement `validate_categories()` in Phase 1 page (currently a no-op stub)
+- [ ] Implement product-type filtering in `src/taxonomy.py:load_categories_for_product_type()`
+- [ ] Deduplicate accent normalization (`rake_keywords.py` vs `keyword_preprocessor.py`)
+- [ ] Extract accessory-detection logic in `src/normalization.py` into a shared helper
+- [ ] Fix `thinking_config` usage in `llm_parallel.py` (pass as separate kwarg, not inside gen_config)
+- [ ] Add `client_secret_*.json` glob to `.gitignore` and remove from tracking if committed
+- [ ] Add `pipeline_cache.csv`, `pipeline_cache_meta.json`, `keyword_cache.csv` to `.gitignore`
+- [ ] Delete `app.py` (legacy dead code)
 
 ### Future Enhancements
 - [ ] Add MSV caching to avoid repeated API calls
 - [ ] Implement historical MSV data retrieval (Jan 2023 - Dec 2025)
 - [ ] Add MSV trend analysis and visualization
 - [ ] Consider upgrading to paid Google Ads API tier for higher quotas
+- [ ] Fix Streamlit deprecation warnings (`use_container_width=True` → `width='stretch'`)
 
 ---
 

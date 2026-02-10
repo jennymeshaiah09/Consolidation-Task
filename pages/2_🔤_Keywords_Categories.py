@@ -14,11 +14,11 @@ load_dotenv()
 # Import core modules
 from src.llm_keywords import (
     generate_keywords_batch,
-    classify_other_products_batch,
     validate_api_key,
     test_api_connection
 )
 from src.rake_keywords import generate_keywords_rake
+from src.normalization import create_product_key
 
 # Import UI utilities
 from utils.ui_components import (
@@ -140,12 +140,192 @@ def render_keyword_generation():
     st.markdown("**Choose Generation Mode:**")
     mode = st.radio(
         "Keyword Generation Mode",
-        options=["⚡ Fast (RAKE)", "🧠 Quality (LLM)"],
+        options=["⚡ Fast (RAKE)", "🧠 Quality (LLM)", "📤 Upload CSV"],
         horizontal=True,
-        help="RAKE is instant but less accurate. LLM is slower but produces better keywords.",
+        help="RAKE is instant but less accurate. LLM is slower but produces better keywords. Upload imports a pre-filled file (keywords + optional MSV).",
         label_visibility="collapsed"
     )
-    use_rake = mode == "⚡ Fast (RAKE)"
+    use_rake  = mode == "⚡ Fast (RAKE)"
+    use_upload = mode == "📤 Upload CSV"
+
+    # --- Upload path --------------------------------------------------------
+    # Accepts a CSV/Excel that already has Product Keyword filled in.
+    # If MSV columns are also present they get merged too, letting the user
+    # skip Phase 3 entirely.
+    if use_upload:
+        st.info(
+            "📤 **Upload Mode**: Import keywords from a pre-filled file. "
+            "If the file also contains MSV columns, Phase 3 can be skipped entirely."
+        )
+
+        uploaded_kw_file = st.file_uploader(
+            "Upload keywords / MSV file",
+            type=['csv', 'xlsx'],
+            key='phase2_kw_upload',
+            help="Needs 'Product Title' or 'Keyword'. Google Ads Keyword Planner exports are supported directly."
+        )
+
+        if uploaded_kw_file is not None:
+            try:
+                upload_df = (pd.read_csv(uploaded_kw_file)
+                             if uploaded_kw_file.name.endswith('.csv')
+                             else pd.read_excel(uploaded_kw_file))
+
+                # --- Google Ads column normalisation ---
+                _ga_rename = {}
+                if 'Keyword' in upload_df.columns and 'Product Keyword' not in upload_df.columns:
+                    _ga_rename['Keyword'] = 'Product Keyword'
+                if 'Monthly Search Estimated' in upload_df.columns and 'Product Keyword Avg MSV' not in upload_df.columns:
+                    _ga_rename['Monthly Search Estimated'] = 'Product Keyword Avg MSV'
+                if _ga_rename:
+                    upload_df = upload_df.rename(columns=_ga_rename)
+                    st.info(f"🔄 Google Ads format detected. Renamed: {_ga_rename}")
+
+                # --- Mon-YY date column normalisation (e.g. Jan-23 → Jan 2023) ---
+                _MONTHS = {'Jan','Feb','Mar','Apr','May','Jun',
+                           'Jul','Aug','Sep','Oct','Nov','Dec'}
+                _date_rename = {}
+                for _c in upload_df.columns:
+                    _parts = str(_c).split('-')
+                    if (len(_parts) == 2
+                            and _parts[0] in _MONTHS
+                            and _parts[1].isdigit()
+                            and len(_parts[1]) == 2):
+                        _date_rename[_c] = f"{_parts[0]} {2000 + int(_parts[1])}"
+                if _date_rename:
+                    upload_df = upload_df.rename(columns=_date_rename)
+                    st.info(f"🔄 Converted {len(_date_rename)} date columns to Mon YYYY format")
+
+                # --- Determine join key ---
+                # Product Title  → exact join   (pre-filled CSV path)
+                # Product Keyword → case-insensitive join (Google Ads export path)
+                if 'Product Title' in upload_df.columns:
+                    join_on_keyword = False
+                elif 'Product Keyword' in upload_df.columns:
+                    # Column must exist AND have actual values — the keyword text
+                    # is the only bridge between Google Ads and your products.
+                    kw_filled = (consolidated_df.get('Product Keyword', pd.Series(dtype=str))
+                                 .astype(str).str.strip().ne('').sum())
+                    if kw_filled == 0:
+                        st.error(
+                            "❌ Product Keyword is empty in your consolidated data. "
+                            "Run keyword generation first (RAKE or LLM), then upload the MSV file."
+                        )
+                        return
+                    join_on_keyword = True
+                else:
+                    st.error("❌ File must contain 'Product Title' or 'Keyword' / 'Product Keyword' column")
+                    return
+
+                st.success(f"✅ Loaded {len(upload_df)} rows")
+
+                # Detect MSV columns
+                monthly_cols = [c for c in upload_df.columns
+                                if len(str(c).split()) == 2
+                                and str(c).split()[0] in _MONTHS
+                                and str(c).split()[1].isdigit()]
+                has_avg_msv     = 'Product Keyword Avg MSV' in upload_df.columns
+                has_peak_season = 'Peak Seasonality' in upload_df.columns
+                has_msv         = has_avg_msv or len(monthly_cols) > 0
+
+                # Summary of what will be merged
+                st.markdown("**Will merge:**")
+                if join_on_keyword:
+                    st.markdown("- 🔗 Joining on **Product Keyword** (case-insensitive match)")
+                else:
+                    kw_count = upload_df['Product Keyword'].notna().sum()
+                    st.markdown(f"- ✅ Product Keyword — {kw_count} keywords")
+                if has_msv:
+                    extras = []
+                    if has_avg_msv:      extras.append("Avg MSV")
+                    if monthly_cols:     extras.append(f"{len(monthly_cols)} monthly columns")
+                    if has_peak_season:  extras.append("Peak Seasonality")
+                    st.markdown(f"- ✅ MSV data — {', '.join(extras)}")
+                elif not join_on_keyword:
+                    st.markdown("- ℹ️ No MSV columns detected — Phase 3 will still be needed for MSV")
+
+                with st.expander("📋 Preview (first 10 rows)"):
+                    st.dataframe(upload_df.head(10), use_container_width=True)
+
+                # Merge & save
+                if st.button("🔗 Merge into Consolidated Data", type="primary"):
+                    if join_on_keyword:
+                        # Case-insensitive join on Product Keyword (Google Ads path).
+                        # Only bring in columns that don't already exist in consolidated_df.
+                        _cons = consolidated_df.copy()
+                        _up   = upload_df.copy()
+                        _cons['_jk'] = _cons['Product Keyword'].astype(str).str.lower().str.strip()
+                        _up['_jk']   = _up['Product Keyword'].astype(str).str.lower().str.strip()
+
+                        cols_to_import = [c for c in upload_df.columns
+                                         if c not in ('Product Keyword', '_jk')
+                                         and c not in consolidated_df.columns]
+                        _up = _up[['_jk'] + cols_to_import].drop_duplicates('_jk')
+
+                        updated_df = _cons.merge(_up, on='_jk', how='left')
+                        updated_df = updated_df.drop(columns=['_jk'])
+                    else:
+                        # Smart Join on Normalized Key (pre-filled CSV path).
+                        # This allows "Jack Daniels" (CSV) to match "Jack Daniel's" (App)
+                        
+                        # 1. Prepare Main Data with Match Key
+                        _cons = consolidated_df.copy()
+                        # Drop existing keyword col to overwrite it properly
+                        if 'Product Keyword' in _cons.columns:
+                            _cons = _cons.drop(columns=['Product Keyword'])
+                        
+                        _cons['_match_key'] = _cons['Product Title'].astype(str).apply(create_product_key)
+
+                        # 2. Identify cols to import
+                        cols_to_import = [c for c in upload_df.columns
+                                         if c != 'Product Title'
+                                         and c != '_match_key'
+                                         and (c not in consolidated_df.columns
+                                              or c == 'Product Keyword')]
+
+                        # 3. Prepare Upload Data with Match Key
+                        _up = upload_df.copy()
+                        _up['_match_key'] = _up['Product Title'].astype(str).apply(create_product_key)
+                        
+                        # Select only relevant columns + match key
+                        # Drop duplicates on the key to prevent explosion
+                        import_df = _up[['_match_key'] + cols_to_import].drop_duplicates('_match_key')
+
+                        # 4. Merge
+                        updated_df = _cons.merge(import_df, on='_match_key', how='left')
+                        
+                        # 5. Cleanup
+                        updated_df['Product Keyword'] = updated_df['Product Keyword'].fillna('')
+                        updated_df = updated_df.drop(columns=['_match_key'])
+
+                    save_keyword_results(updated_df)
+
+                    # --- match-rate feedback ---
+                    if join_on_keyword and has_msv:
+                        # Count how many rows actually received MSV data
+                        _check_col = ('Product Keyword Avg MSV' if has_avg_msv
+                                      else monthly_cols[0])
+                        matched = updated_df[_check_col].notna().sum()
+                        total   = len(updated_df)
+                        if matched == 0:
+                            st.warning(
+                                "⚠️ 0 keywords matched between the upload and consolidated data. "
+                                "Check that the keywords in the Google Ads export match the ones "
+                                "generated in Phase 2 (spelling, spaces, etc.)."
+                            )
+                        else:
+                            pct = matched / total * 100
+                            st.success(f"✅ MSV merged — {matched} / {total} products matched ({pct:.1f}%). You can **skip Phase 3** and go straight to Phase 4.")
+                    elif has_msv:
+                        st.success("✅ Keywords + MSV merged. You can **skip Phase 3** and go straight to Phase 4.")
+                    else:
+                        st.success("✅ Keywords merged successfully!")
+
+            except Exception as e:
+                st.error(f"❌ Error reading file: {str(e)}")
+
+        return  # upload mode handled — skip RAKE / LLM UI below
+    # ------------------------------------------------------------------------
 
     if use_rake:
         st.info("⚡ **RAKE Mode**: Instant keyword extraction using NLP. No API calls needed!")

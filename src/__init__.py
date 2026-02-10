@@ -1,6 +1,10 @@
 # Product Data Consolidation Package
 
 import os
+from dotenv import load_dotenv
+
+# Load .env file on import
+load_dotenv()
 
 
 def get_google_api_key() -> str | None:

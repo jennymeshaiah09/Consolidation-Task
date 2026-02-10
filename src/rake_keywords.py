@@ -5,9 +5,10 @@ Optimized to produce keywords that match Google search patterns.
 """
 
 import re
-import unicodedata
 from typing import List, Optional, Set
 import pandas as pd
+
+from .keyword_preprocessor import normalize_accents_safe
 
 # Stop words for RAKE - common words to ignore
 STOP_WORDS = {
@@ -126,34 +127,6 @@ AGE_PATTERNS = [
 ]
 
 
-def normalize_accents(text: str) -> str:
-    """
-    ISSUE 8: Properly handle accents - normalize to ASCII equivalents.
-    rosé -> rose, château -> chateau, côtes -> cotes
-    """
-    # Map common accented characters to ASCII
-    accent_map = {
-        'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-        'á': 'a', 'à': 'a', 'â': 'a', 'ä': 'a', 'ã': 'a',
-        'ó': 'o', 'ò': 'o', 'ô': 'o', 'ö': 'o', 'õ': 'o',
-        'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
-        'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-        'ñ': 'n', 'ç': 'c',
-        'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
-        'Á': 'A', 'À': 'A', 'Â': 'A', 'Ä': 'A', 'Ã': 'A',
-        'Ó': 'O', 'Ò': 'O', 'Ô': 'O', 'Ö': 'O', 'Õ': 'O',
-        'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
-        'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
-        'Ñ': 'N', 'Ç': 'C',
-    }
-
-    result = text
-    for accented, plain in accent_map.items():
-        result = result.replace(accented, plain)
-
-    return result
-
-
 def simplify_age_statements(text: str) -> str:
     """
     ISSUE 3: Convert "12 Year Old" -> "12yr" to reduce keyword length.
@@ -174,7 +147,7 @@ def clean_title(title: str) -> str:
     result = title
 
     # ISSUE 8: Normalize accents (rosé -> rose)
-    result = normalize_accents(result)
+    result = normalize_accents_safe(result)
 
     # ISSUE 3: Simplify age statements BEFORE removing patterns
     result = simplify_age_statements(result)
@@ -284,8 +257,8 @@ def brand_in_text(brand: str, text: str) -> bool:
         return True  # No brand to add
 
     # Normalize both for comparison
-    brand_normalized = normalize_accents(brand.lower())
-    text_normalized = normalize_accents(text.lower())
+    brand_normalized = normalize_accents_safe(brand.lower())
+    text_normalized = normalize_accents_safe(text.lower())
 
     # Remove special characters for comparison
     brand_clean = re.sub(r"[^a-z0-9\s]", "", brand_normalized)
@@ -382,7 +355,13 @@ def extract_keyword_rake(title: str, brand: str = "", max_words: int = 4) -> str
     # Title case the result
     result = keyword.title()
 
-    # ISSUE 1: Final safety check - cap at 4 words
+    # Strip special characters — replace & with And, then remove everything
+    # that isn't a letter, digit, or space
+    result = result.replace('&', 'And')
+    result = re.sub(r'[^A-Za-z0-9 ]', '', result)
+    result = re.sub(r'\s+', ' ', result).strip()
+
+    # Cap at max_words
     result_words = result.split()
     if len(result_words) > max_words:
         result = ' '.join(result_words[:max_words])
@@ -414,8 +393,10 @@ def generate_keywords_rake(
     print(f"Generating MSV-optimized keywords with RAKE for {total} products...")
 
     for idx, row in df.iterrows():
-        title = str(row.get('Product Title', ''))
-        brand = str(row.get('Product Brand', ''))
+        _title = row.get('Product Title', '')
+        title = str(_title) if pd.notna(_title) else ''
+        _brand = row.get('Product Brand', '')
+        brand = str(_brand) if pd.notna(_brand) else ''
 
         keyword = extract_keyword_rake(title, brand, max_words=4)
         df.at[idx, 'Product Keyword'] = keyword

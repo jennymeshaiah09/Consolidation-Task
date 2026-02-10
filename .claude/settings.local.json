@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(ls -la \"e:\\\\Projects\\\\Tenny Bro\\\\Consolidation-Task\\\\Examples & Debug\"\")",
+      "Bash(cd:*)",
+      "Bash(wc:*)"
     ]
   }
 }

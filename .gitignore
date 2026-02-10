@@ -22,7 +22,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+.claude/
 # Virtual environments
 venv/
 ENV/
@@ -61,3 +61,31 @@ NUL
 temp/
 tmp/
 output/
+
+# Google OAuth credentials
+client_secret*.json
+
+# Auto-generated pipeline cache
+pipeline_cache.csv
+pipeline_cache_meta.json
+keyword_cache.csv
+
+# Analysis / utility scripts (not part of the app)
+analyze_*.py
+verify_*.py
+llm_parallel.py
+generate_refresh_token.py
+
+# Data directories (too large for git)
+BWS Products Jan to Dec 2025/
+Pets Products Jan to Dec 2025/
+Electronics/
+Examples/
+Debug files/
+
+# Output / export files
+verify_export_output.xlsx
+*.xlsx
+
+# Gemini config
+.gemini/

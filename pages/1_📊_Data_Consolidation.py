@@ -14,6 +14,7 @@ from src.validation import validate_all_files
 from src.consolidation import consolidate_data
 from src.category_validator import CategoryValidator
 from src.taxonomy import load_all_categories, load_categories_for_product_type
+from src.llm_keywords import classify_other_products_batch, validate_api_key
 
 # Import UI utilities
 from utils.ui_components import (
@@ -45,168 +46,113 @@ init_session_state()
 # Apply custom CSS
 apply_custom_css()
 
+def run_classification(consolidated_df: pd.DataFrame, product_type: str):
+    """Run LLM classification for 'Other' products"""
+    
+    if not validate_api_key():
+        st.error("❌ Google API Key not configured. Please add GOOGLE_API_KEY to your .env file.")
+        return
 
-def validate_categories(consolidated_df: pd.DataFrame, product_type: str, is_test: bool = False):
-    """Validate and fix product categories using LLM
-
-    Args:
-        consolidated_df: DataFrame with products to validate
-        product_type: Product type (BWS, Pets, etc.)
-        is_test: If True, only shows preview without updating session state
-    """
+    # Progress bar and status
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def update_progress(progress, current, total):
+        progress_bar.progress(progress)
+        status_text.text(f"🤖 Classifying product {current} of {total}...")
 
     try:
-        # Initialize validator
-        validator = CategoryValidator()
+        with st.spinner("🤖 Classifying 'Other' products with parallel AI..."):
+            updated_df = classify_other_products_batch(
+                consolidated_df,
+                product_type,
+                progress_callback=update_progress,
+                batch_size=30,  # Optimized batch size
+                max_workers=5   # Parallel workers
+            )
+        
+        st.session_state.consolidated_df = updated_df
+        st.success("✅ Classification complete! Product categories updated.")
+        
+        # Rerun to show updated data
+        time.sleep(1)
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"❌ Classification failed: {str(e)}")
 
-        # Load categories for the specific product type only
-        all_categories = load_categories_for_product_type(product_type)
 
-        # Remove "Other" and any empty/null categories
-        all_categories = [cat for cat in all_categories if cat and cat.lower() != 'other']
+def validate_categories(consolidated_df: pd.DataFrame, product_type: str, is_test: bool = False):
+    """Validate and fix product categories using LLM"""
+    if not validate_api_key():
+        st.error("❌ Google API Key not configured. Please add GOOGLE_API_KEY to your .env file.")
+        return
 
-        st.info(f"📊 Loaded {len(all_categories)} categories from {product_type} taxonomy")
+    # Determine category column
+    category_col = 'Product Category L3' if 'Product Category L3' in consolidated_df.columns else 'Product Category'
 
-        # Show all available categories for debugging
-        with st.expander(f"📋 Available Categories for {product_type}", expanded=False):
-            # Display in columns for better readability
-            st.markdown("**All categories that the AI can choose from:**")
-            st.write(", ".join(sorted(all_categories)))
+    # Build product list for the validator
+    products = []
+    for idx, row in consolidated_df.iterrows():
+        products.append({
+            'title': str(row.get('Product Title', '')),
+            'brand': str(row.get('Product Brand', '')),
+            'assigned_category': str(row.get(category_col, 'Other')),
+        })
 
-        # Prepare products for validation (validate L3 - most specific level)
-        products = []
-        for idx, row in consolidated_df.iterrows():
-            products.append({
-                'title': row['Product Title'],
-                'brand': row.get('Product Brand', 'Unknown'),
-                'assigned_category': row.get('Product Category L3', 'Other')
-            })
+    available_categories = load_categories_for_product_type(product_type)
 
-        # Progress indicator
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    label = "sample" if is_test else "all"
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-        total_products = len(products)
-        total_batches = (total_products + 19) // 20  # Ceiling division
+    try:
+        with st.spinner(f"🔍 Validating {label} categories with AI..."):
+            validator = CategoryValidator()
+            validation_results = validator.validate_categories_batch(
+                products, available_categories, batch_size=20
+            )
+            report = validator.generate_validation_report(validation_results)
 
-        test_label = "🧪 TEST MODE: " if is_test else ""
-        status_text.text(f"{test_label}🤖 Validating {total_products:,} products in {total_batches} batches...")
+        progress_bar.progress(1.0)
+        status_text.text("Validation complete.")
 
-        # Validate in batches with progress updates
-        validation_results = []
-        batch_size = 20
-
-        for i in range(0, len(products), batch_size):
-            batch = products[i:i + batch_size]
-            batch_num = i // batch_size + 1
-
-            # Update progress
-            progress = (i / total_products) * 100
-            progress_bar.progress(int(progress))
-            status_text.text(f"🤖 Validating batch {batch_num}/{total_batches} ({len(batch)} products)...")
-
-            try:
-                batch_results = validator._validate_batch(batch, all_categories)
-                validation_results.extend(batch_results)
-
-                # Rate limiting between batches
-                if i + batch_size < len(products):
-                    time.sleep(2)
-
-            except Exception as e:
-                st.warning(f"⚠️ Batch {batch_num} failed: {e}. Assuming categories are correct for this batch.")
-                # Add fallback results
-                for product in batch:
-                    validation_results.append({
-                        'title': product['title'],
-                        'assigned_category': product['assigned_category'],
-                        'llm_suggested_category': product['assigned_category'],
-                        'is_correct': True,
-                        'confidence': 'unknown',
-                        'error': str(e)
-                    })
-
-        progress_bar.progress(100)
-        status_text.text(f"✅ Validated {total_products:,} products!")
-
-        # Generate report
-        report = validator.generate_validation_report(validation_results)
-
-        # Update DataFrame with corrected categories (L3 - most specific level)
-        corrections_made = 0
-        for idx, result in enumerate(validation_results):
-            if not result['is_correct']:
-                consolidated_df.at[idx, 'Product Category L3'] = result['llm_suggested_category']
-                corrections_made += 1
-
-        # Update session state (only if not a test run)
-        if not is_test:
-            st.session_state.consolidated_df = consolidated_df
-            st.success("✅ Session state updated with corrected categories!")
-        else:
-            st.info("🧪 Test mode: Session state not updated. Run full validation to apply changes.")
-
-        # Display results
-        st.markdown("---")
-        st.subheader("📊 Validation Results")
-
+        # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Validated", report['total_products'])
+        col2.metric("Correct", report['correct'])
+        col3.metric("Incorrect", report['incorrect'])
+        col4.metric("Accuracy", f"{report['accuracy']:.1%}")
 
-        with col1:
-            st.metric("Total Products", report['total_products'])
-
-        with col2:
-            st.metric("Correct", report['correct'], delta=None)
-
-        with col3:
-            st.metric("Fixed", corrections_made, delta=None)
-
-        with col4:
-            accuracy_pct = report['accuracy'] * 100
-            st.metric("Accuracy", f"{accuracy_pct:.1f}%")
-
-        # Show misclassifications if any
+        # Show misclassifications and offer to apply corrections
         if report['misclassifications']:
-            st.markdown("### 🔄 Categories Updated")
-
-            with st.expander(f"View {len(report['misclassifications'])} corrections", expanded=True):
-                corrections_df = pd.DataFrame([
-                    {
-                        'Product': m['title'][:50] + '...' if len(m['title']) > 50 else m['title'],
-                        'Original': m['assigned_category'],
-                        'Corrected': m['llm_suggested_category'],
-                        'Confidence': m['confidence'].upper()
-                    }
-                    for m in report['misclassifications']
-                ])
-
-                st.dataframe(
-                    corrections_df,
-                    use_container_width=True,
-                    height=min(400, len(corrections_df) * 35 + 50)
+            st.markdown("#### ⚠️ Suggested Corrections")
+            for item in report['misclassifications']:
+                st.info(
+                    f"**{item['title']}**\n"
+                    f"Assigned: `{item['assigned_category']}` → Suggested: `{item['llm_suggested_category']}` "
+                    f"(confidence: {item['confidence']})"
                 )
 
-            if is_test:
-                st.success(f"🧪 Test complete: Would update {corrections_made} categories. Run full validation to apply changes.")
-            else:
-                st.success(f"✅ Updated {corrections_made} categories successfully!")
+            if st.button("✅ Apply Suggested Corrections", type="primary"):
+                corrections = {item['title']: item['llm_suggested_category']
+                               for item in report['misclassifications']}
+                df = st.session_state.consolidated_df
+                for idx, row in df.iterrows():
+                    title = str(row.get('Product Title', ''))
+                    if title in corrections:
+                        df.at[idx, category_col] = corrections[title]
+                st.session_state.consolidated_df = df
+                save_consolidation_results(product_type, {}, df)
+                st.success(f"✅ Applied {len(corrections)} corrections!")
+                time.sleep(1)
+                st.rerun()
         else:
-            if is_test:
-                st.success("🧪 Test complete: All sampled categories are correct!")
-            else:
-                st.success("✅ All categories are correct! No changes needed.")
-
-        # Clean up progress indicators
-        progress_bar.empty()
-        status_text.empty()
-
-    except ValueError as e:
-        st.error(f"❌ Configuration Error: {e}")
-        st.info("💡 Make sure GOOGLE_API_KEY is set in your .env file")
+            st.success("✅ All categories validated correctly!")
 
     except Exception as e:
-        st.error(f"❌ Validation Error: {e}")
-        st.info("💡 The validation failed, but your data is still saved. You can proceed without validation.")
+        st.error(f"❌ Validation failed: {str(e)}")
+
 
 
 def process_uploaded_file(uploaded_file, product_type: str):
@@ -267,12 +213,26 @@ def process_uploaded_file(uploaded_file, product_type: str):
         save_consolidation_results(product_type, monthly_data, consolidated_df)
         st.session_state['_uploaded_file_name'] = uploaded_file.name
 
-    # Category Validation Section
+    # Category Validation & Classification Section
     st.markdown("---")
-    st.subheader("🔍 Category Validation (Optional)")
+    st.subheader("🔍 Category Management")
 
-    st.info("💡 Use AI to validate and improve Level 3 (specific) categories. Helps minimize 'Other' classifications. L1 and L2 remain unchanged.")
+    st.info("💡 Use AI to improve 'Other' categories and validate Level 3 assignments.")
 
+    # 1. Classify "Other" Products (The new feature)
+    other_count = (consolidated_df['Product Category L3'] == 'Other').sum() if 'Product Category L3' in consolidated_df.columns else 0
+    
+    if other_count > 0:
+        st.warning(f"⚠️ Found {other_count} products classified as 'Other'.")
+        col_cls, _ = st.columns([1, 1])
+        with col_cls:
+            if st.button(f"🤖 Auto-Classify {other_count} 'Other' Products", type="primary", use_container_width=True):
+                 run_classification(consolidated_df, product_type)
+    else:
+        st.success("✅ No 'Other' products found. Good job!")
+
+    st.markdown("#### Validation (Quality Check)")
+    
     # Two buttons: Test with sample, or validate all
     col1, col2 = st.columns(2)
 
@@ -283,11 +243,12 @@ def process_uploaded_file(uploaded_file, product_type: str):
             validate_categories(test_sample, product_type, is_test=True)
 
     with col2:
-        if st.button("🤖 Validate All Categories", type="primary", use_container_width=True):
+        if st.button("🔎 Validate All Categories", type="secondary", use_container_width=True):
             validate_categories(consolidated_df, product_type, is_test=False)
 
     # Display preview
     st.markdown("---")
+# ... (rest of file)
     st.subheader("📋 Data Preview")
 
     # Column selector for preview

@@ -62,6 +62,69 @@ def extract_leaf_category(category_full: str) -> str:
     return category_full
 
 
+def _detect_accessory_flags(title_lower: str) -> dict:
+    """Compute accessory-detection flags used by both classify functions."""
+    electronics_accessory_keywords = ['case', 'cover', 'charger', 'cable', 'screen protector',
+                                       'protector', 'adapter', 'holder', 'stand', 'mount', 'bag']
+    electronics_controller_keywords = ['controller', 'gamepad', 'joystick']
+    phone_brands = ['iphone', 'galaxy', 'pixel', 'oneplus', 'xiaomi', 'oppo', 'vivo', 'nokia']
+
+    is_phone_accessory = (any(kw in title_lower for kw in electronics_accessory_keywords) and
+                          any(brand in title_lower for brand in phone_brands))
+    is_controller = any(kw in title_lower for kw in electronics_controller_keywords)
+
+    camera_accessory_keywords = ['camera bag', 'camera case', 'tripod', 'filter',
+                                  'strap', 'lens cap', 'memory card']
+    is_camera_accessory = any(kw in title_lower for kw in camera_accessory_keywords)
+
+    camera_brands = ['canon', 'nikon', 'sony', 'fujifilm', 'panasonic', 'olympus']
+    is_main_camera = (any(brand in title_lower for brand in camera_brands) and
+                      'camera' in title_lower and
+                      not is_camera_accessory)
+
+    pet_food_keywords = ['food', 'treats', 'kibble', 'wet food', 'dry food']
+    pet_accessory_keywords = ['collar', 'leash', 'lead', 'harness', 'bed', 'bowl', 'toy']
+    is_pet_food = any(kw in title_lower for kw in pet_food_keywords)
+    is_pet_accessory = (any(kw in title_lower for kw in pet_accessory_keywords) and
+                        not is_pet_food)
+
+    return {
+        'is_phone_accessory': is_phone_accessory,
+        'is_controller': is_controller,
+        'is_camera_accessory': is_camera_accessory,
+        'is_main_camera': is_main_camera,
+        'is_pet_food': is_pet_food,
+        'is_pet_accessory': is_pet_accessory,
+    }
+
+
+def _should_skip_category(category_name: str, flags: dict) -> bool:
+    """Return True if category should be skipped based on accessory-detection flags."""
+    if flags['is_phone_accessory']:
+        if "Phone Accessories" not in category_name and "Phone Cases" not in category_name:
+            return True
+
+    if flags['is_controller']:
+        if "Controller" not in category_name and "Gamepad" not in category_name:
+            return True
+
+    if flags['is_camera_accessory']:
+        if "Accessories" not in category_name and "Bags" not in category_name and "Tripod" not in category_name:
+            return True
+    elif flags['is_main_camera']:
+        if "Accessories" in category_name or "Bags" in category_name or "Tripod" in category_name:
+            return True
+
+    if flags['is_pet_food']:
+        if "Food" not in category_name and "Treats" not in category_name:
+            return True
+    elif flags['is_pet_accessory']:
+        if "Food" in category_name:
+            return True
+
+    return False
+
+
 def classify_category(product_title: str, product_type: str) -> str:
     """
     Classify a product into a category based on keywords in the title.
@@ -83,38 +146,7 @@ def classify_category(product_title: str, product_type: str) -> str:
     # Handle common spelling variants for better matching
     title_lower = title_lower.replace('whiskey', 'whisky')  # Normalize to British spelling
 
-    # ===================================================================
-    # ACCESSORY DETECTION - Prevent main products matching accessory categories
-    # ===================================================================
-
-    # Electronics accessories
-    electronics_accessory_keywords = ['case', 'cover', 'charger', 'cable', 'screen protector',
-                                       'protector', 'adapter', 'holder', 'stand', 'mount', 'bag']
-    electronics_controller_keywords = ['controller', 'gamepad', 'joystick']
-    phone_brands = ['iphone', 'galaxy', 'pixel', 'oneplus', 'xiaomi', 'oppo', 'vivo', 'nokia']
-
-    is_phone_accessory = (any(kw in title_lower for kw in electronics_accessory_keywords) and
-                          any(brand in title_lower for brand in phone_brands))
-    is_controller = any(kw in title_lower for kw in electronics_controller_keywords)
-
-    # Camera accessories (prevent "Canon Camera Bag" from matching "Cameras")
-    # IMPORTANT: Check for FULL phrases like "camera bag", not just "camera"
-    camera_accessory_keywords = ['camera bag', 'camera case', 'tripod', 'filter',
-                                  'strap', 'lens cap', 'memory card']
-    is_camera_accessory = any(kw in title_lower for kw in camera_accessory_keywords)
-
-    # If title contains brand + "camera" but NOT accessory keywords, prioritize main camera
-    camera_brands = ['canon', 'nikon', 'sony', 'fujifilm', 'panasonic', 'olympus']
-    is_main_camera = (any(brand in title_lower for brand in camera_brands) and
-                      'camera' in title_lower and
-                      not is_camera_accessory)
-
-    # Pet accessories (prevent "Dog Collar" from matching "Dog Food")
-    pet_food_keywords = ['food', 'treats', 'kibble', 'wet food', 'dry food']
-    pet_accessory_keywords = ['collar', 'leash', 'lead', 'harness', 'bed', 'bowl', 'toy']
-    is_pet_food = any(kw in title_lower for kw in pet_food_keywords)
-    is_pet_accessory = (any(kw in title_lower for kw in pet_accessory_keywords) and
-                        not is_pet_food)
+    flags = _detect_accessory_flags(title_lower)
 
     # Map old product type names to Excel sheet names
     mapped_type = PRODUCT_TYPE_MAPPING.get(product_type, product_type)
@@ -140,39 +172,8 @@ def classify_category(product_title: str, product_type: str) -> str:
     best_keyword_length = 0
 
     for category_name, keywords in sorted_categories:
-        # ===================================================================
-        # CATEGORY FILTERING - Skip incompatible categories based on product type
-        # ===================================================================
-
-        # Electronics: Phone accessories
-        if is_phone_accessory:
-            if "Phone Accessories" not in category_name and "Phone Cases" not in category_name:
-                continue
-
-        # Electronics: Gaming controllers
-        if is_controller:
-            if "Controller" not in category_name and "Gamepad" not in category_name:
-                continue
-
-        # Cameras & Optics: Camera accessories vs main cameras
-        if is_camera_accessory:
-            # Only match accessory categories
-            if "Accessories" not in category_name and "Bags" not in category_name and "Tripod" not in category_name:
-                continue
-        elif is_main_camera:
-            # Skip accessory categories for main cameras
-            if "Accessories" in category_name or "Bags" in category_name or "Tripod" in category_name:
-                continue
-
-        # Pets: Food vs Accessories/Toys
-        if is_pet_food:
-            # Only match food categories
-            if "Food" not in category_name and "Treats" not in category_name:
-                continue
-        elif is_pet_accessory:
-            # Skip food categories for accessories
-            if "Food" in category_name:
-                continue
+        if _should_skip_category(category_name, flags):
+            continue
 
         # Sort keywords by length (longest first) for more specific matching
         sorted_keywords = sorted(keywords, key=len, reverse=True)
@@ -244,32 +245,7 @@ def classify_category_levels(product_title: str, product_type: str) -> tuple:
     # Handle common spelling variants
     title_lower = title_lower.replace('whiskey', 'whisky')
 
-    # ===================================================================
-    # ACCESSORY DETECTION - Same as classify_category
-    # ===================================================================
-    electronics_accessory_keywords = ['case', 'cover', 'charger', 'cable', 'screen protector',
-                                       'protector', 'adapter', 'holder', 'stand', 'mount', 'bag']
-    electronics_controller_keywords = ['controller', 'gamepad', 'joystick']
-    phone_brands = ['iphone', 'galaxy', 'pixel', 'oneplus', 'xiaomi', 'oppo', 'vivo', 'nokia']
-
-    is_phone_accessory = (any(kw in title_lower for kw in electronics_accessory_keywords) and
-                          any(brand in title_lower for brand in phone_brands))
-    is_controller = any(kw in title_lower for kw in electronics_controller_keywords)
-
-    camera_accessory_keywords = ['camera bag', 'camera case', 'tripod', 'filter',
-                                  'strap', 'lens cap', 'memory card']
-    is_camera_accessory = any(kw in title_lower for kw in camera_accessory_keywords)
-
-    camera_brands = ['canon', 'nikon', 'sony', 'fujifilm', 'panasonic', 'olympus']
-    is_main_camera = (any(brand in title_lower for brand in camera_brands) and
-                      'camera' in title_lower and
-                      not is_camera_accessory)
-
-    pet_food_keywords = ['food', 'treats', 'kibble', 'wet food', 'dry food']
-    pet_accessory_keywords = ['collar', 'leash', 'lead', 'harness', 'bed', 'bowl', 'toy']
-    is_pet_food = any(kw in title_lower for kw in pet_food_keywords)
-    is_pet_accessory = (any(kw in title_lower for kw in pet_accessory_keywords) and
-                        not is_pet_food)
+    flags = _detect_accessory_flags(title_lower)
 
     # Map old product type names to Excel sheet names
     mapped_type = PRODUCT_TYPE_MAPPING.get(product_type, product_type)
@@ -292,28 +268,8 @@ def classify_category_levels(product_title: str, product_type: str) -> tuple:
     best_keyword_length = 0
 
     for category_name, keywords in sorted_categories:
-        # Apply same filtering logic as classify_category
-        if is_phone_accessory:
-            if "Phone Accessories" not in category_name and "Phone Cases" not in category_name:
-                continue
-
-        if is_controller:
-            if "Controller" not in category_name and "Gamepad" not in category_name:
-                continue
-
-        if is_camera_accessory:
-            if "Accessories" not in category_name and "Bags" not in category_name and "Tripod" not in category_name:
-                continue
-        elif is_main_camera:
-            if "Accessories" in category_name or "Bags" in category_name or "Tripod" in category_name:
-                continue
-
-        if is_pet_food:
-            if "Food" not in category_name and "Treats" not in category_name:
-                continue
-        elif is_pet_accessory:
-            if "Food" in category_name:
-                continue
+        if _should_skip_category(category_name, flags):
+            continue
 
         sorted_keywords = sorted(keywords, key=len, reverse=True)
 
