@@ -80,12 +80,15 @@ generate_refresh_token.py
 BWS Products Jan to Dec 2025/
 Pets Products Jan to Dec 2025/
 Electronics/
-Examples/
+Examples/*
+!Examples/taxonomy.txt
+!Examples/Categories & subs.xlsx
 Debug files/
 
 # Output / export files
 verify_export_output.xlsx
 *.xlsx
+!Examples/Categories & subs.xlsx
 
 # Gemini config
 .gemini/
