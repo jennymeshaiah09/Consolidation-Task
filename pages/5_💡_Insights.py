@@ -204,8 +204,9 @@ def _write_all_data_sheet(writer, export_df):
     base_cols = [
         'Product Title', 'Product Brand', 'Product Max Price', 'Availability',
         'Product Category L1', 'Product Category L2', 'Product Category L3',
-        'Product Keyword', 'Product Keyword Avg MSV',
-        'Peak Seasonality', 'True Peak',
+        'Product Keyword', 'Product Keyword Avg MSV','Peak Seasonality 2025',
+        'Peak Seasonality 2023', 'Peak Seasonality 2024', 
+        'True Peak',
         'Peak Month Avg MSV', 'Peak Popularity',
         'YoY MSV 2024', 'YoY MSV 2025',
     ]
@@ -399,20 +400,24 @@ def render_excel_export_section(df, cat_agg, brand_agg):
     # Deduplicate columns once (safety net for double-merged MSV data)
     export_df = df.loc[:, ~df.columns.duplicated(keep='first')]
 
+    # Ensure "True Peak" exists (rename from "Peak Seasonality" if needed)
+    if 'Peak Seasonality' in export_df.columns and 'True Peak' not in export_df.columns:
+         export_df = export_df.rename(columns={'Peak Seasonality': 'True Peak'})
+
     # Progress bar for data preparation
     progress_bar = st.progress(0, text="Preparing export data...")
 
     # --- Build "All Data" Excel (single sheet, every column) ---
     progress_bar.progress(10, text="📊 Building All Data export...")
     out_data = BytesIO()
-    with pd.ExcelWriter(out_data, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(out_data, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
         _write_all_data_sheet(writer, export_df)
     out_data.seek(0)
     progress_bar.progress(40, text="✅ All Data ready. Building Full Insights Report...")
 
     # --- Build "Full Insights Report" Excel (All Data + Summary + Categories + Brands + Charts) ---
     out_report = BytesIO()
-    with pd.ExcelWriter(out_report, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(out_report, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
         workbook = writer.book
 
         # Sheet 1: All Data — full pipeline, every column

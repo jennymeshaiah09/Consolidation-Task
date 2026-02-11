@@ -39,51 +39,82 @@ init_session_state()
 apply_custom_css()
 
 
-def calculate_peak_seasonality(row):
+def calculate_yearly_peak(row, year):
     """
-    Calculate Peak Seasonality from MSV monthly data.
+    Calculate Peak Seasonality for a specific year.
     Returns the months with highest search volume (within 1 std dev of max).
+    If insufficient data (less than 2 months), returns the highest month.
     """
-    # MSV columns: Jan 2023 - Dec 2025 (36 months)
-    months = []
-    for year in [2023, 2024, 2025]:
-        for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']:
-            months.append(f"{month} {year}")
-
-    # Extract MSV values for these columns
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    
+    # Extract MSV values for this year
     msv_values = {}
-    for month_col in months:
-        if month_col in row.index and pd.notna(row[month_col]):
+    for month in months:
+        col = f"{month} {year}"
+        if col in row.index and pd.notna(row[col]):
             try:
-                msv_values[month_col] = float(row[month_col])
+                msv_val = float(row[col])
+                # Only consider non-zero values as relevant for peak
+                if msv_val > 0:
+                    msv_values[month] = msv_val
             except (ValueError, TypeError):
                 continue
 
     if not msv_values:
         return ""
 
-    # Find months with highest search volume
-    # Get top 4 months
+    # Sort months by MSV (highest first)
     sorted_months = sorted(msv_values.items(), key=lambda x: x[1], reverse=True)
+    
+    # Get top 4 months
     top_4 = sorted_months[:4]
 
+    # If less than 2 valid data points, return the single highest
     if len(top_4) < 2:
-        # If less than 2 months, return the highest
         return top_4[0][0] if top_4 else ""
 
     # Calculate mean and std dev of top 4
     top_values = [msv for _, msv in top_4]
     mean_msv = sum(top_values) / len(top_values)
-    std_dev = (sum((x - mean_msv) ** 2 for x in top_values) / len(top_values)) ** 0.5
+    variance = sum((x - mean_msv) ** 2 for x in top_values) / len(top_values)
+    std_dev = variance ** 0.5
 
     # Find months within 1 std dev of mean
+    # Since we want peaks (high values), we check if value >= (Mean - StdDev)
     threshold = mean_msv - std_dev
     peak_months = [month for month, msv in top_4 if msv >= threshold]
+    
+    # Sort chronologically for better readability
+    month_order = {m: i for i, m in enumerate(months)}
+    peak_months.sort(key=lambda m: month_order[m])
 
-    # Extract just the month names (remove year)
-    peak_month_names = [month.split()[0] for month in peak_months]
+    return ", ".join(peak_months)
 
-    return ", ".join(peak_month_names)
+
+def calculate_intersection_peak(row):
+    """
+    Calculate True Peak Seasonality by finding the intersection of
+    peaks across 2023, 2024, and 2025.
+    
+    Returns:
+        Comma-separated list of months that appear in ALL 3 years.
+        If no intersection, returns empty string.
+    """
+    months_2023 = set([m.strip() for m in str(row.get('Peak Seasonality 2023', '')).split(',') if m.strip()])
+    months_2024 = set([m.strip() for m in str(row.get('Peak Seasonality 2024', '')).split(',') if m.strip()])
+    months_2025 = set([m.strip() for m in str(row.get('Peak Seasonality 2025', '')).split(',') if m.strip()])
+    
+    # Find intersection of all 3 years
+    common_months = months_2023.intersection(months_2024).intersection(months_2025)
+    
+    if not common_months:
+        return ""
+    
+    # Sort chronologically
+    all_months_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    sorted_common = sorted(list(common_months), key=lambda m: all_months_order.index(m) if m in all_months_order else 99)
+    
+    return ", ".join(sorted_common)
 
 
 def calculate_true_peak(row):
@@ -262,29 +293,30 @@ def merge_msv_data(consolidated_df, msv_df):
         )
 
     # Calculate (or Recalculate) Peak Seasonality if missing or empty
-    should_calculate = False
+    # Calculate (or Recalculate) Peak Seasonality
+    st.info("Calculating Yearly Peak Seasonality (2023, 2024, 2025)...")
     
-    if 'Peak Seasonality' not in merged_df.columns:
-        should_calculate = True
-    else:
-        # Check if it's effectively empty (all NaN or empty strings)
-        non_empty = merged_df['Peak Seasonality'].astype(str).str.strip().replace('nan', '').replace('None', '')
-        if (non_empty == '').all():
-            should_calculate = True
+    # Ensure we have data columns
+    has_2023 = any('2023' in str(c) for c in merged_df.columns)
+    has_2024 = any('2024' in str(c) for c in merged_df.columns)
+    has_2025 = any('2025' in str(c) for c in merged_df.columns)
 
-    if should_calculate:
-        st.info("Calculating Peak Seasonality from MSV monthly data...")
-        # Ensure we have month columns before trying
-        sample_cols = [c for c in merged_df.columns if 'Jan 20' in str(c) or 'Dec 20' in str(c)]
-        if sample_cols:
-            merged_df['Peak Seasonality'] = merged_df.apply(calculate_peak_seasonality, axis=1)
-            
-            # Calculate True Peak using comprehensive algorithm
-            st.info("Calculating True Peak (Z-score + YoY growth + consistency)...")
-            merged_df['True Peak'] = merged_df.apply(calculate_true_peak, axis=1)
-        else:
-            st.warning("Could not calculate Peak Seasonality: No monthly MSV columns (e.g. 'Jan 2023') found.")
+    if has_2023:
+        merged_df['Peak Seasonality 2023'] = merged_df.apply(lambda row: calculate_yearly_peak(row, 2023), axis=1)
+    if has_2024:
+        merged_df['Peak Seasonality 2024'] = merged_df.apply(lambda row: calculate_yearly_peak(row, 2024), axis=1)
+    if has_2025:
+        merged_df['Peak Seasonality 2025'] = merged_df.apply(lambda row: calculate_yearly_peak(row, 2025), axis=1)
 
+    # Calculate True Peak (Intersection)
+    st.info("Calculating True Peak Seasonality (Intersection of all 3 years)...")
+    merged_df['Peak Seasonality'] = merged_df.apply(calculate_intersection_peak, axis=1)
+    
+    # Also keep the old "True Peak" score logic as "True Peak Score" just in case, or remove it if obsolete.
+    # For now, we will rename the old "True Peak" to avoid confusion if we want to keep it, 
+    # but based on user request "True Peak would be...", we are using the intersection as the main "Peak Seasonality".
+    # We will strictly map the Intersection to "Peak Seasonality" column as per typical display requirements.
+    
     return merged_df
 
 
