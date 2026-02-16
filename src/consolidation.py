@@ -207,10 +207,10 @@ def consolidate_data(monthly_data: Dict[str, pd.DataFrame], product_type: str) -
     master_df = master_df.merge(dec_data, on='product_key', how='left')
 
     # Apply business rules for December data
-    # Price: If not available, set to "Unavailable"
+    # Price: If not available, set to "N/A"
     # Convert to string type to avoid mixed-type column issues
     master_df['Product Max Price'] = master_df['Product Max Price'].apply(
-        lambda x: str(x) if pd.notna(x) else "Unavailable"
+        lambda x: str(x) if pd.notna(x) else "N/A"
     )
 
     # Availability: If empty, set to "Potential Gap"

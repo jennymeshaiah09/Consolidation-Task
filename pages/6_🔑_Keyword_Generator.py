@@ -23,6 +23,18 @@ from src.llm_keywords import (
     validate_api_key,
     test_api_connection
 )
+# Import new generator
+try:
+    from src.keyword_generator import (
+        get_gemini_client,
+        normalize_title,
+        extract_entities,
+        generate_candidates,
+        score_candidates
+    )
+    HAS_ADVANCED = True
+except ImportError:
+    HAS_ADVANCED = False
 
 # Page config
 st.set_page_config(
@@ -42,13 +54,18 @@ It addresses common issues that cause 0 MSV keywords.
 # Sidebar options
 st.sidebar.header("⚙️ Settings")
 
+method_options = ["Hybrid (Recommended)", "RAKE", "LLM (API)"]
+if HAS_ADVANCED:
+    method_options.insert(0, "Advanced (Entity + Template)")
+
 method = st.sidebar.selectbox(
     "Extraction Method",
-    ["Hybrid (Recommended)", "RAKE", "LLM (API)"],
+    method_options,
     help="""
-    **Hybrid**: Brand + Product Type + Differentiator (fastest, most reliable)
-    **RAKE**: Statistical keyword extraction (fast, local)
-    **LLM**: AI-powered extraction (slower, requires API key)
+    **Advanced**: Entity Extraction -> Templates -> Scoring (Best for MSV)
+    **Hybrid**: Brand + Product Type + Differentiator (Fast, reliable)
+    **RAKE**: Statistical keyword extraction (Local)
+    **LLM**: Legacy AI extraction
     """
 )
 
@@ -60,21 +77,15 @@ max_words = st.sidebar.slider(
     help="96% of keywords with MSV are under 7 words. 4 is optimal."
 )
 
-# Model selector (only shown for LLM method)
-if method == "LLM (API)":
+# Model selector (only shown for LLM/Advanced method)
+if method in ["LLM (API)", "Advanced (Entity + Template)"]:
     st.sidebar.divider()
     st.sidebar.markdown("### 🤖 LLM Settings")
     
     llm_model = st.sidebar.selectbox(
         "Gemini Model",
         ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemma-3-4b-it"],
-        help="""
-        **gemini-2.5-flash-lite**: Best for bulk — no thinking overhead, 4K RPM, unlimited RPD (paid)
-        **gemini-2.5-flash**: Higher quality, has thinking overhead (paid, 1K RPM, 10K RPD)
-        **gemini-2.5-pro**: Premium quality, needs paid quota
-        **gemini-2.0-flash**: Best free-tier option (1000 RPD)
-        **gemma-3-4b-it**: Smallest model, highest free limits
-        """
+        index=0
     )
     
     batch_size = st.sidebar.slider(
@@ -107,6 +118,69 @@ else:
     batch_size = 20
     api_delay = 0.5
     max_products_llm = 0
+
+st.sidebar.divider()
+# ... (rest of sidebar info is fine) ...
+
+# ... (Upload Data Section - Keep as is) ...
+# ... (File Loading Logic - Keep as is) ...
+
+# ... (Main Processing Logic) ...
+# INSIDE existing file loading block...
+# I need to target the "Generate Keywords" button logic specifically.
+
+# Quick test section at the bottom needs update
+st.divider()
+with st.expander("🧪 Quick Test - Try Single Keywords", expanded=True):
+    st.markdown("Test keyword extraction on individual products:")
+    
+    test_title = st.text_input(
+        "Product Title",
+        value="Porta 6 Red Wine Case | Mix Any Six & Save"
+    )
+    test_brand = st.text_input(
+        "Product Brand",
+        value="Porta 6"
+    )
+    
+    if st.button("Test Extraction"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 🧠 Advanced (Entity + Template)")
+            if HAS_ADVANCED:
+                # Run the pipeline
+                client = get_gemini_client(llm_model)
+                if client:
+                    norm = normalize_title(test_title)
+                    st.text(f"Normalized: {norm}")
+                    
+                    with st.spinner("Extracting..."):
+                        entities = extract_entities(client, norm)
+                    st.json(entities)
+                    
+                    candidates = generate_candidates(entities)
+                    scores = score_candidates(candidates, entities, norm)
+                    
+                    st.markdown("**🏆 Top Candidates (Scored):**")
+                    score_df = pd.DataFrame(scores, columns=['Score', 'Keyword'])
+                    st.dataframe(score_df, hide_index=True)
+                else:
+                    st.error("API Key missing")
+            else:
+                st.error("Module not found")
+
+        with col2:
+            st.markdown("### 🐢 Legacy Methods")
+            hybrid_kw = extract_keyword_hybrid(test_title, test_brand, "", max_words)
+            st.markdown(f"**Hybrid:** `{hybrid_kw}`")
+            
+            rake_kw = extract_keyword_rake(test_title, test_brand, max_words)
+            st.markdown(f"**RAKE:** `{rake_kw}`")
+            
+            cleaned = preprocess_title(test_title, test_brand)
+            st.markdown(f"**Preprocessed:** `{cleaned}`")
+
 
 st.sidebar.divider()
 st.sidebar.markdown("### ℹ️ About Methods")
@@ -320,29 +394,56 @@ if uploaded_file:
 
                 brand_line = f"\nBrand: {sample_brand}" if sample_brand != 'Unknown' else ""
                 diag_prompt = (
-                    "You are a Google Ads keyword specialist. Output the single search phrase a real customer would type into Google to find this product. Short and punchy — if in doubt, drop the word.\n\n"
-                    f"Title: {sample_title}{brand_line}\n\n"
-                    "KEEP: Brand (if given) + Product Type. Add one distinguishing feature only if it genuinely changes what the product is.\n"
-                    "Product types to always keep: Champagne, Whisky, Wine, Rose, Lager, Gin, Vodka, Rum, Tequila, Liqueur, Cider, Prosecco, Bourbon, Brandy, Cognac, Scotch, Sake, Whiskey, Beer, Ale, Stout, Port, Sherry, Vermouth, Absinthe, Mead, Perry.\n\n"
-                    "BRAND WARNING: The Brand field sometimes contains the estate or producer (e.g. Château d'Esclans) rather than the consumer-facing brand. If the title already contains a distinct, more recognisable brand name (e.g. Whispering Angel), use THAT as the brand and DROP the estate/producer from the Brand field entirely.\n\n"
-                    "DROP everything below — none of it adds search value:\n"
-                    "- Sizes / volumes: ml, cl, L, oz, 700ml, 750ml, 1L, 330ml\n"
+                    "You are an ecommerce SEO keyword specialist.\n\n"
+
+                    "Output the search phrase a real customer would type into Google to find this exact product. "
+                    "Focus on product-identifying words that match real search behaviour.\n\n"
+
+                    "PRIORITY ORDER (most important first):\n"
+                    "1. Exact product name / cuvee / label / model (strongest signal)\n"
+                    "2. Product name + vintage year if the year identifies the product (especially for wine)\n"
+                    "3. Brand + product name\n"
+                    "4. Brand + product type\n"
+                    "5. Category fallback only if no product entity exists\n\n"
+
+                    "Title: {sample_title}{brand_line}\n\n"
+
+                    "KEEP when they identify the product:\n"
+                    "- Product name, cuvee, label, collection name\n"
+                    "- Vintage year for wine\n"
+                    "- Numbers that are part of brand names (example: Porta 6)\n"
+                    "- Collection lines (example: Chosen by Majestic)\n"
+                    "- Core product type words: Champagne, Whisky, Wine, Rose, Lager, Gin, Vodka, Rum, Tequila, "
+                    "Liqueur, Cider, Prosecco, Bourbon, Brandy, Cognac, Scotch, Sake, Whiskey, Beer, Ale, Stout, "
+                    "Port, Sherry, Vermouth, Absinthe, Mead, Perry\n\n"
+
+                    "DROP only if NOT product-identifying:\n"
+                    "- Sizes or volumes: ml, cl, L, oz, 700ml, 750ml, 1L, 330ml\n"
                     "- Quantities: 6 pack, 12 pack, 24x330ml\n"
-                    "- ABV: 40%, ABV, vol, proof\n"
-                    "- Promotional: gift, hamper, personalised, offer, deal, bestseller, sale\n"
-                    "- Age / vintage: 12 Year Old, 18 Year, 2023, 2024 — drop entirely, not even abbreviated\n"
-                    "- Multipack: case, set, mixed, selection, tasting, bundle, collection\n"
+                    "- ABV, proof, vol\n"
+                    "- Promotional wording: gift, hamper, personalised, offer, deal, sale\n"
+                    "- Multipack wording: case, set, bundle, mixed selection\n"
                     "- Retailers: Laithwaites, Waitrose, Tesco, Amazon, Majestic\n"
-                    "- Filler / generic: premium, classic, original, reserve, special, limited, edition, vintage, imperial, brut, single malt, blended, dry, smooth, rich, delicate, finest, authentic, natural, real, true, great, extra\n"
-                    "- Geography (unless it IS the brand): Scottish, Tennessee, French, Highland, Islay, Kentucky, Irish, London, Italian, Spanish\n"
-                    "- Accents → plain text: rosé → rose, moët → moet, château → chateau\n\n"
+                    "- Generic filler only when not part of product name: premium, classic, special, limited, reserve\n\n"
+
+                    "SPECIAL RULES:\n"
+                    "- For wine: KEEP vintage year and product label names\n"
+                    "- Do NOT collapse specific products into generic terms like 'wine'\n"
+                    "- If product name uniquely identifies the product, prefer it over generic category terms\n"
+                    "- Convert accents to plain text: rosé → rose, moët → moet, château → chateau\n\n"
+
+                    "OUTPUT RULES:\n"
+                    "- 2–4 words preferred\n"
+                    "- lowercase\n"
+                    "- no quotes\n"
+                    "- no explanation\n"
+                    "- return only the keyword\n\n"
+
                     "EXAMPLES:\n"
-                    "\"Johnnie Walker Black Label 12 Year Old Blended Scotch Whisky 700ml | Brand: Johnnie Walker\" → Johnnie Walker Whisky\n"
-                    "\"Bollinger Special Cuvee Brut Champagne 750ml | Brand: Bollinger\" → Bollinger Champagne\n"
-                    "\"Tanqueray London Dry Gin 1L Gift Edition | Brand: Tanqueray\" → Tanqueray Gin\n"
-                    "\"Stella Artois Lager 24x330ml | Brand: Stella Artois\" → Stella Artois Lager\n"
-                    "\"Whispering Angel Rosé 2023 750ml | Brand: Château d'Esclans\" → Whispering Angel Rose\n\n"
-                    "Title Case. No quotes. No explanation. Return ONLY the keyword."
+                    "\"Chateau Batailley 2016 Pauillac Bordeaux\" → chateau batailley 2016\n"
+                    "\"Porta 6 Red Wine Case\" → porta 6 red wine\n"
+                    "\"Chosen by Majestic Primitivo 2022\" → primitivo 2022\n"
+                    "\"Whispering Angel Rose 2023\" → whispering angel rose"
                 )
 
                 try:
@@ -507,6 +608,71 @@ if uploaded_file:
                 progress_bar.progress(1.0)
                 status_text.text(f"✅ Generated {total} keywords")
                 
+            elif method == "Advanced (Entity + Template)":
+                # Advanced extraction
+                if not validate_api_key():
+                    st.error("❌ GOOGLE_API_KEY not set.")
+                    st.stop()
+                
+                client = get_gemini_client(llm_model)
+                if not client:
+                    st.error("❌ Failed to initialize Gemini client.")
+                    st.stop()
+                
+                status_text.text(f"Generating with Advanced Strategy ({llm_model})...")
+                
+                # Check for limit
+                if max_products_llm > 0:
+                    df_to_process = result_df.head(max_products_llm).copy()
+                else:
+                    df_to_process = result_df.copy()
+                
+                try:
+                    from src.keyword_generator import generate_keywords_advanced_parallel
+                    
+                    def update_advanced_progress(progress, current, total):
+                        progress_bar.progress(min(progress, 1.0))
+                        status_text.text(f"Processing... {current}/{total} products")
+
+                    df_processed = generate_keywords_advanced_parallel(
+                        df_to_process,
+                        progress_callback=update_advanced_progress,
+                        model_name=llm_model,
+                        max_workers=batch_size, # Reuse batch slider as worker count
+                        api_delay=api_delay
+                    )
+                    
+                    # Update the main DataFrame
+                    if max_products_llm > 0:
+                        # Update only the processed rows in the main df
+                        result_df.update(df_processed)
+                    else:
+                        result_df = df_processed
+
+                    progress_bar.progress(1.0)
+
+                    # Check how many keywords were generated
+                    filled = result_df['Product Keyword'].astype(str).str.strip().ne('').sum()
+                    blank = len(result_df) - filled
+
+                    if blank == 0:
+                        status_text.text(f"✅ Generated {filled} keywords with Advanced Strategy")
+                    else:
+                        status_text.text(f"⚠️ Generated {filled}/{len(result_df)} keywords ({blank} blanks)")
+
+                    # Surface any errors collected from the worker threads
+                    api_errors = df_processed.attrs.get('errors', [])
+                    if api_errors:
+                        with st.expander(f"⚠️ API/Extraction errors ({len(api_errors)})", expanded=True):
+                            for err in api_errors[:10]:
+                                st.warning(err)
+                            if len(api_errors) > 10:
+                                st.info(f"... and {len(api_errors) - 10} more errors")
+
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    st.stop()
+
             else:
                 # LLM extraction
                 if not validate_api_key():
@@ -535,7 +701,8 @@ if uploaded_file:
                         batch_size=batch_size,
                         delay_between_batches=api_delay,
                         model_name=llm_model,
-                        max_products=max_prods
+                        max_products=max_prods,
+                        max_workers=batch_size  # Use batch_size as proxy for workers or limit to 5-10
                     )
                     status_text.text(f"✅ Generated keywords with {llm_model}")
                 except Exception as e:
@@ -624,34 +791,4 @@ if 'keyword_results' in st.session_state:
             use_container_width=True
         )
 
-# Quick test section
-st.divider()
-with st.expander("🧪 Quick Test - Try Single Keywords"):
-    st.markdown("Test keyword extraction on individual products:")
-    
-    test_title = st.text_input(
-        "Product Title",
-        value="Balvenie 12 Year Old The Sweet Toast of American Oak Single Malt Whisky 700ml"
-    )
-    test_brand = st.text_input(
-        "Product Brand",
-        value="Balvenie"
-    )
-    
-    if st.button("Test Extraction"):
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            hybrid_kw = extract_keyword_hybrid(test_title, test_brand, "", max_words)
-            st.markdown("**Hybrid:**")
-            st.code(hybrid_kw)
-        
-        with col2:
-            rake_kw = extract_keyword_rake(test_title, test_brand, max_words)
-            st.markdown("**RAKE:**")
-            st.code(rake_kw)
-        
-        with col3:
-            cleaned = preprocess_title(test_title, test_brand)
-            st.markdown("**Preprocessed Text:**")
-            st.code(cleaned)
+

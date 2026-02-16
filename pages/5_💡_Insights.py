@@ -125,16 +125,36 @@ def generate_insights_df(consolidated_df):
             avg_msv.loc[mask] = (row_sum / row_count).fillna(0).astype(int)
 
     # Fallback to general average if specific month data is missing
-    if 'Product Keyword Avg MSV' in df.columns:
-        fallback = pd.to_numeric(df['Product Keyword Avg MSV'], errors='coerce').fillna(0)
-        avg_msv = avg_msv.where(avg_msv > 0, fallback)
+    # Fallback/Calculate Avg MSV if missing or 0
+    all_msv_cols = []
+    for y in [2023, 2024, 2025]:
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        for m in month_names:
+            all_msv_cols.append(f"{m} {y}")
+
+    # Calculate 36-month average
+    calculated_avg = pd.Series(0, index=df.index)
+    existing_msv = [c for c in all_msv_cols if c in df.columns]
+    if existing_msv:
+        subset = df[existing_msv].apply(pd.to_numeric, errors='coerce').fillna(0)
+        calculated_avg = subset.mean(axis=1).astype(int)
+
+    if 'Product Keyword Avg MSV' not in df.columns:
+        df['Product Keyword Avg MSV'] = calculated_avg
+    else:
+        # If existing is 0 or NaN, overwrite
+        curr = pd.to_numeric(df['Product Keyword Avg MSV'], errors='coerce').fillna(0)
+        df['Product Keyword Avg MSV'] = curr.where(curr > 0, calculated_avg)
+    
+    # Use the finalized Product Keyword Avg MSV as fallback for Peak Month Avg MSV
+    avg_msv = avg_msv.where(avg_msv > 0, df['Product Keyword Avg MSV'])
 
     df['Peak Month Avg MSV'] = avg_msv.astype(int)
 
     return df
 
 
-def _write_all_data_sheet(writer, export_df):
+def _write_all_data_sheet(writer, export_df, sheet_name='All Data'):
     """Write the All Data sheet: specific column order + Yearly Heatmap formatting.
     
     Uses separate loops for heatmap, N/A formatting, and center-alignment.
@@ -143,7 +163,7 @@ def _write_all_data_sheet(writer, export_df):
     import re
     
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    years = [2023, 2024, 2025]
+    # years = [2023, 2024, 2025] # Unused now
     
     # Columns to exclude from export
     exclude_cols = [
@@ -153,7 +173,8 @@ def _write_all_data_sheet(writer, export_df):
         'Top of Page Bid Low Range', 'Top of Page Bid High Range',
         'Peak Strength',
         'Competition Level',
-        'Calculated Peak Month'
+        'Calculated Peak Month',
+        'Peak Month Avg MSV'
     ]
     
     # Build MSV columns grouped by year
@@ -165,8 +186,38 @@ def _write_all_data_sheet(writer, export_df):
     # Popularity columns
     pop_cols = [f'Product Popularity {m}' for m in months]
     
+    # --- RENAME COLUMNS FOR EXPORT ---
+    # User Request:
+    # Popularity: "Product Popularity Jan" -> "Jan-25 PP"
+    # MSV 2024: "Jan 2024" -> "Jan-24 MSV"
+    # MSV 2025: "Jan 2025" -> "Jan-25 MSV"
+    
+    rename_map = {}
+    
+    # Rename MSV Columns
+    for col in msv_cols_2023: rename_map[col] = f"{col[:3]}-23 MSV"
+    for col in msv_cols_2024: rename_map[col] = f"{col[:3]}-24 MSV"
+    for col in msv_cols_2025: rename_map[col] = f"{col[:3]}-25 MSV"
+    
+    # Rename Popularity Columns
+    pop_cols_new = []
+    for m in months:
+        old_name = f'Product Popularity {m}'
+        new_name = f'{m}-25 PP'
+        rename_map[old_name] = new_name
+        pop_cols_new.append(new_name)
+    
+    # Apply renaming to a working copy
+    working_df = export_df.rename(columns=rename_map).copy()
+    
+    # Update our list references to match the new names
+    msv_cols_2023 = [rename_map.get(c, c) for c in msv_cols_2023]
+    msv_cols_2024 = [rename_map.get(c, c) for c in msv_cols_2024]
+    msv_cols_2025 = [rename_map.get(c, c) for c in msv_cols_2025]
+    all_msv_cols_list = msv_cols_2023 + msv_cols_2024 + msv_cols_2025
+    pop_cols = pop_cols_new
+
     # --- YoY Calculation ---
-    working_df = export_df.copy()
     
     def calculate_yoy(row, current_cols, previous_cols):
         """Calculate Year-over-Year change percentage."""
@@ -204,10 +255,10 @@ def _write_all_data_sheet(writer, export_df):
     base_cols = [
         'Product Title', 'Product Brand', 'Product Max Price', 'Availability',
         'Product Category L1', 'Product Category L2', 'Product Category L3',
-        'Product Keyword', 'Product Keyword Avg MSV','Peak Seasonality 2025',
-        'Peak Seasonality 2023', 'Peak Seasonality 2024', 
+        'Product Keyword', 'Product Keyword Avg MSV', 'Keyword Fit', 'Keyword Fit Reason',
+        'Peak Seasonality 2025', 'Peak Seasonality 2023', 'Peak Seasonality 2024', 
         'True Peak',
-        'Peak Month Avg MSV', 'Peak Popularity',
+        'Peak Popularity',
         'YoY MSV 2024', 'YoY MSV 2025',
     ]
     desired_order = base_cols + msv_cols_2023 + msv_cols_2024 + msv_cols_2025 + pop_cols
@@ -217,6 +268,11 @@ def _write_all_data_sheet(writer, export_df):
     final_cols = [c for c in desired_order if c in filtered_df.columns]
     remaining = [c for c in filtered_df.columns if c not in final_cols]
     final_cols.extend(remaining)
+    
+    # SAFETY: Explicitly remove 'Peak Month Avg MSV' if it snuck in via 'remaining'
+    if 'Peak Month Avg MSV' in final_cols:
+        final_cols.remove('Peak Month Avg MSV')
+        
     ordered_df = filtered_df[final_cols]
     
     # Sort by Avg MSV
@@ -239,7 +295,7 @@ def _write_all_data_sheet(writer, export_df):
         ordered_df[col] = ordered_df[col].astype(str).apply(lambda x: ILLEGAL_XML_RE.sub('', x))
     
     # Write base data to Excel
-    sheet_name = 'All Data'
+    # sheet_name arg used here
     LOGO_ROWS = 6
     ordered_df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=LOGO_ROWS)
     workbook = writer.book
@@ -303,11 +359,16 @@ def _write_all_data_sheet(writer, export_df):
             row_vals = []
             for col in existing:
                 cell_val = ordered_df.iloc[row_idx][col]
-                if cell_val == 'N/A' or (isinstance(cell_val, str) and cell_val.upper() == 'N/A'):
-                    row_vals.append(None)
+                if cell_val == 'N/A' or (isinstance(cell_val, str) and str(cell_val).upper() == 'N/A'):
+                     row_vals.append(None)
                 else:
                     try:
-                        row_vals.append(float(cell_val))
+                        val = float(cell_val)
+                        # Treat 0 as N/A for PP columns
+                        if "PP" in col and val == 0:
+                             row_vals.append(None)
+                        else:
+                             row_vals.append(val)
                     except (ValueError, TypeError):
                         row_vals.append(None)
             
@@ -321,15 +382,35 @@ def _write_all_data_sheet(writer, export_df):
                 col_idx_val = col_to_idx[col]
                 cell_val = ordered_df.iloc[row_idx][col]
                 
-                if cell_val == 'N/A' or (isinstance(cell_val, str) and cell_val.upper() == 'N/A'):
-                    worksheet.write(excel_row, col_idx_val, 'N/A', na_format)
-                    continue
+                if cell_val == 'N/A' or (isinstance(cell_val, str) and str(cell_val).upper() == 'N/A'):
+                     worksheet.write(excel_row, col_idx_val, 'N/A', na_format)
+                     continue
+                
+                # Treat 0 as N/A for PP columns during writing too
+                if "PP" in col:
+                     try:
+                         if float(cell_val) == 0:
+                             worksheet.write(excel_row, col_idx_val, 'N/A', na_format)
+                             continue
+                     except: pass
                 
                 if row_vals[j] is not None:
-                    color = _get_color_for_value(row_vals[j], min_val, max_val)
-                    if color:
+                     # Determine color logic based on column type
+                     # MSV: Green(High) -> Red(Low) (Default)
+                     # Popularity (PP): Green(1, Low) -> Red(High) (Inverted)
+                     
+                     is_popularity = "PP" in col # Check if it's a PP column
+                     
+                     if is_popularity:
+                          # For Rank: Min (1) is Green, Max is Red
+                          color = _get_color_for_value(row_vals[j], min_val, max_val, invert=True) 
+                     else:
+                          # For Volume (MSV): Max is Green, Min is Red
+                          color = _get_color_for_value(row_vals[j], min_val, max_val, invert=False)
+                          
+                     if color:
                         worksheet.write(excel_row, col_idx_val, row_vals[j], get_heatmap_format(color))
-                    else:
+                     else:
                         worksheet.write(excel_row, col_idx_val, row_vals[j], data_format)
     
     # --- Loop 1-3: Heatmap coloring per year ---
@@ -337,10 +418,16 @@ def _write_all_data_sheet(writer, export_df):
     apply_row_color_coding(msv_cols_2024)
     apply_row_color_coding(msv_cols_2025)
     
-    # --- Loop 4: N/A formatting for all MSV + Peak Popularity columns ---
+    # --- Loop 4: Heatmap coloring for Popularity ---
+    apply_row_color_coding(pop_cols)
+    
+    # --- Loop 5: N/A formatting for all MSV + Peak Popularity columns ---
     na_check_cols = list(all_msv_set)
     if 'Peak Popularity' in col_to_idx:
         na_check_cols.append('Peak Popularity')
+    # Add PP columns to N/A check
+    for c in pop_cols:
+        if c in col_to_idx: na_check_cols.append(c)
     
     for row_idx in range(num_rows):
         excel_row = row_idx + header_row + 1
@@ -350,8 +437,14 @@ def _write_all_data_sheet(writer, export_df):
             if cell_val == 'N/A' or (isinstance(cell_val, str) and str(cell_val).upper() == 'N/A'):
                 worksheet.write(excel_row, col_idx_val, 'N/A', na_format)
     
-    # --- Loop 5: Center-align all non-MSV columns ---
-    non_msv_cols = [c for c in final_cols if c not in all_msv_set]
+    # --- Loop 5: Center-align all non-MSV columns (excluding pop_cols and Peak Month Avg MSV) ---
+    pop_cols_set = set(pop_cols)
+    non_msv_cols = [
+        c for c in final_cols 
+        if c not in all_msv_set 
+        and c not in pop_cols_set 
+        and c != 'Peak Month Avg MSV'
+    ]
     for row_idx in range(num_rows):
         excel_row = row_idx + header_row + 1
         for col in non_msv_cols:
@@ -373,13 +466,28 @@ def _write_all_data_sheet(writer, export_df):
     worksheet.freeze_panes(header_row + 1, 0)
 
 
-def _get_color_for_value(value, min_val, max_val):
-    """Calculate RGB heatmap color. Red(min) → Yellow(mid) → Green(max)."""
+def _get_color_for_value(value, min_val, max_val, invert=False):
+    """
+    Calculate RGB heatmap color. 
+    Standard: Red(min) → Yellow(mid) → Green(max).
+    Invert (for Rank): Green(min) → Yellow(mid) → Red(max).
+    """
     if pd.isna(value) or pd.isna(min_val) or pd.isna(max_val):
         return None
     if min_val == max_val:
-        return '#00B050'
+        return '#00B050' # Green
+    
+    # Normalize 0..1
     normalized = (value - min_val) / (max_val - min_val)
+    
+    if invert:
+        # For Rank: 1 (min) is Best (Green), Max is Worst (Red)
+        # So we invert the normalized value logic implies:
+        # standard is Min(Red)..Max(Green).
+        # We want Min(Green)..Max(Red).
+        # So use 1-normalized.
+        normalized = 1 - normalized
+
     if normalized <= 0.5:
         ratio = normalized * 2
         r = int(192 + (255 - 192) * ratio)
@@ -404,28 +512,67 @@ def render_excel_export_section(df, cat_agg, brand_agg):
     if 'Peak Seasonality' in export_df.columns and 'True Peak' not in export_df.columns:
          export_df = export_df.rename(columns={'Peak Seasonality': 'True Peak'})
 
+    # Ensure Product Keyword Avg MSV is filled with 0 if NaN
+    if 'Product Keyword Avg MSV' in export_df.columns:
+        export_df['Product Keyword Avg MSV'] = export_df['Product Keyword Avg MSV'].fillna(0)
+
     # Progress bar for data preparation
     progress_bar = st.progress(0, text="Preparing export data...")
 
-    # --- Build "All Data" Excel (single sheet, every column) ---
+    # --- Build "All Data" Excel (All Data + Keyword Fit Sheets) ---
     progress_bar.progress(10, text="📊 Building All Data export...")
     out_data = BytesIO()
     with pd.ExcelWriter(out_data, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
-        _write_all_data_sheet(writer, export_df)
+        # 1. Main Sheet
+        _write_all_data_sheet(writer, export_df, sheet_name='All Data')
+        
+        # 2. Keyword Fit Sheets (if available)
+        if 'Keyword Fit' in export_df.columns:
+            # Fit Y
+            df_y = export_df[export_df['Keyword Fit'] == 'Y'].copy()
+            if not df_y.empty:
+                if 'Product Keyword' in df_y.columns:
+                    df_y = df_y.drop_duplicates(subset=['Product Keyword'])
+                _write_all_data_sheet(writer, df_y, sheet_name='Keyword Fit Y')
+            
+            # Fit N
+            df_n = export_df[export_df['Keyword Fit'] == 'N'].copy()
+            if not df_n.empty:
+                if 'Product Keyword' in df_n.columns:
+                    df_n = df_n.drop_duplicates(subset=['Product Keyword'])
+                _write_all_data_sheet(writer, df_n, sheet_name='Keyword Fit N')
+
     out_data.seek(0)
     progress_bar.progress(40, text="✅ All Data ready. Building Full Insights Report...")
 
-    # --- Build "Full Insights Report" Excel (All Data + Summary + Categories + Brands + Charts) ---
+    # --- Build "Full Insights Report" Excel (All Sheets + Summary + Categories + Brands + Charts) ---
     out_report = BytesIO()
     with pd.ExcelWriter(out_report, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
         workbook = writer.book
 
-        # Sheet 1: All Data — full pipeline, every column
+        # Sheet 1: All Data
         progress_bar.progress(50, text="📊 Report: Writing All Data sheet...")
-        _write_all_data_sheet(writer, export_df)
+        _write_all_data_sheet(writer, export_df, sheet_name='All Data')
+        
+        # Optional: Keyword Fit Sheets in Report too?
+        if 'Keyword Fit' in export_df.columns:
+            # Fit Y
+            df_y = export_df[export_df['Keyword Fit'] == 'Y'].copy()
+            if not df_y.empty:
+                if 'Product Keyword' in df_y.columns:
+                    df_y = df_y.drop_duplicates(subset=['Product Keyword'])
+                _write_all_data_sheet(writer, df_y, sheet_name='Keyword Fit Y')
+            
+            # Fit N
+            df_n = export_df[export_df['Keyword Fit'] == 'N'].copy()
+            if not df_n.empty:
+                if 'Product Keyword' in df_n.columns:
+                    df_n = df_n.drop_duplicates(subset=['Product Keyword'])
+                _write_all_data_sheet(writer, df_n, sheet_name='Keyword Fit N')
 
         # Sheet 2: Summary
         progress_bar.progress(65, text="📊 Report: Writing Summary sheet...")
+        # ... (Same as before)
         summary_data = {
             'Metric': [
                 'Total Products',

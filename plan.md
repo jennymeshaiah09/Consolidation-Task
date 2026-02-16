@@ -127,7 +127,7 @@ A Streamlit application that consolidates monthly product data (Jan-Dec 2025) fr
 - [x] Monthly popularity data merge (Jan-Dec)
 - [x] December-only data handling (Price, Availability)
 - [x] Business rules implementation
-  - [x] Price from Dec only, "Unavailable" if missing (string type)
+  - [x] Price from Dec only, "N/A" if missing (string type)
   - [x] Availability from Dec, "Potential Gap" if empty
 - [x] Peak Popularity calculation (variance-based, top 4 months)
 - [x] MSV placeholder columns (left blank)

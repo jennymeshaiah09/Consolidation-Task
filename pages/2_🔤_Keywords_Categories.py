@@ -17,6 +17,7 @@ from src.llm_keywords import (
     validate_api_key,
     test_api_connection
 )
+from src.keyword_generator import verify_keywords_bulk
 from src.rake_keywords import generate_keywords_rake
 from src.normalization import create_product_key
 
@@ -434,15 +435,69 @@ def render_keyword_generation():
             # Save results
             save_keyword_results(updated_df)
 
-            if trial_mode and max_products:
-                st.info(f"Remaining {len(consolidated_df) - max_products} products have empty keywords.")
-
-            progress_bar.progress(1.0)
-            status_text.text("Complete!")
 
         except Exception as e:
             st.error(f"Error generating keywords: {str(e)}")
             return
+
+
+    # --- VERIFICATION SECTION (New) ---
+    st.markdown("---")
+    st.markdown("### 🕵️ Step 2: Verify Keyword Quality")
+    st.info("Check if the generated/uploaded keywords are a valid fit for the products using AI (Strict Mode).")
+
+    # Check if we have keywords to verify
+    has_keywords = 'Product Keyword' in consolidated_df.columns and consolidated_df['Product Keyword'].notna().any()
+    
+    if st.button("✅ Verify Keyword Fit", type="primary", disabled=not has_keywords):
+        if not has_keywords:
+            st.error("No keywords found to verify. Generate or upload them first.")
+            return
+
+        progress_bar_v = st.progress(0)
+        status_text_v = st.empty()
+
+        def update_prog_v(pct, curr, total):
+            progress_bar_v.progress(pct)
+            status_text_v.text(f"Verifying {curr}/{total}...")
+
+        try:
+             # Run verification
+            with st.spinner("Verifying keyword fit..."):
+                # Use 'Product Keyword' and 'Product Title' cols
+                verified_df = verify_keywords_bulk(
+                    consolidated_df,
+                    title_col='Product Title',
+                    keyword_col='Product Keyword',
+                    progress_callback=update_prog_v
+                )
+                
+                # Rename columns as requested
+                verified_df = verified_df.rename(columns={
+                    'Match': 'Keyword Fit',
+                    'Reason': 'Keyword Fit Reason'
+                })
+                
+                # Update consolidated_df with new columns
+                consolidated_df['Keyword Fit'] = verified_df['Keyword Fit']
+                consolidated_df['Keyword Fit Reason'] = verified_df['Keyword Fit Reason']
+                
+                # Save
+                save_keyword_results(consolidated_df)
+                
+                # Show stats
+                fit_counts = consolidated_df['Keyword Fit'].value_counts()
+                y_count = fit_counts.get('Y', 0)
+                n_count = fit_counts.get('N', 0)
+                total = len(consolidated_df)
+                
+                st.success("✅ Verification Complete!")
+                col_v1, col_v2 = st.columns(2)
+                col_v1.metric("✅ Fits (Y)", f"{y_count}", delta=f"{y_count/total*100:.1f}%")
+                col_v2.metric("❌ Mismatches (N)", f"{n_count}", delta_color="inverse")
+                
+        except Exception as e:
+            st.error(f"Verification failed: {str(e)}")
 
 
 def render_keyword_preview():
@@ -479,6 +534,12 @@ def render_keyword_preview():
 
         sample = with_keywords[display_cols].head(10)
         st.dataframe(sample, use_container_width=True)
+
+    # Show Verification Sample if available
+    if 'Keyword Fit' in consolidated_df.columns:
+        st.markdown("**Verification Results Preview:**")
+        v_cols = ['Product Title', 'Product Keyword', 'Keyword Fit', 'Keyword Fit Reason']
+        st.dataframe(consolidated_df[v_cols].head(10), use_container_width=True)
 
 
 def render_export_section():

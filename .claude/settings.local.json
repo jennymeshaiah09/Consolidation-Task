@@ -4,7 +4,8 @@
       "Bash(python:*)",
       "Bash(ls -la \"e:\\\\Projects\\\\Tenny Bro\\\\Consolidation-Task\\\\Examples & Debug\"\")",
       "Bash(cd:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(tail -100 \"generated_keywords \\(1\\).csv\")"
     ]
   }
 }

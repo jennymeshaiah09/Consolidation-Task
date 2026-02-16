@@ -222,14 +222,57 @@ def process_uploaded_file(uploaded_file, product_type: str):
     # 1. Classify "Other" Products (The new feature)
     other_count = (consolidated_df['Product Category L3'] == 'Other').sum() if 'Product Category L3' in consolidated_df.columns else 0
     
-    if other_count > 0:
-        st.warning(f"⚠️ Found {other_count} products classified as 'Other'.")
-        col_cls, _ = st.columns([1, 1])
-        with col_cls:
-            if st.button(f"🤖 Auto-Classify {other_count} 'Other' Products", type="primary", use_container_width=True):
+    col_cls, col_brand = st.columns(2)
+    
+    with col_cls:
+        if other_count > 0:
+            st.warning(f"⚠️ {other_count} products classified as 'Other'.")
+            if st.button(f"🤖 Auto-Classify 'Other' Products", type="primary", use_container_width=True):
                  run_classification(consolidated_df, product_type)
-    else:
-        st.success("✅ No 'Other' products found. Good job!")
+        else:
+            st.success("✅ No 'Other' products found.")
+
+    # 2. Extract Missing Brands (New Feature)
+    from src.llm_keywords import extract_brands_batch
+    
+    # Check for missing brands
+    def is_missing_brand(val):
+        return str(val).lower().strip() in ('', 'nan', 'none', 'null')
+        
+    missing_brand_count = consolidated_df['Product Brand'].apply(is_missing_brand).sum()
+
+    with col_brand:
+        if missing_brand_count > 0:
+            st.warning(f"⚠️ {missing_brand_count} products missing Brand.")
+            if st.button(f"🏷️ Auto-Extract Missing Brands", type="primary", use_container_width=True):
+                if not validate_api_key():
+                    st.error("❌ Google API Key not configured.")
+                else:
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    def update_brand_progress(progress, current, total):
+                        progress_bar.progress(progress)
+                        status_text.text(f"🏷️ Extracting brand {current} of {total}...")
+                        
+                    try:
+                        with st.spinner("🤖 Extracting brands from titles..."):
+                            updated_df = extract_brands_batch(
+                                consolidated_df,
+                                progress_callback=update_brand_progress,
+                                batch_size=30,
+                                max_workers=5
+                            )
+                        
+                        st.session_state.consolidated_df = updated_df
+                        save_consolidation_results(product_type, {}, updated_df)
+                        st.success("✅ Brand extraction complete!")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Failed: {str(e)}")
+        else:
+            st.success("✅ All products have brands.")
 
     st.markdown("#### Validation (Quality Check)")
     
