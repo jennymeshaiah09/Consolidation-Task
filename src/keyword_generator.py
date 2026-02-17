@@ -414,58 +414,47 @@ def verify_keyword_match(client, product_title: str, keyword: str) -> Dict[str, 
     Verify if a keyword is a valid match for a product title using LLM.
     Returns: {'match': 'Y'/'N', 'reason': '...'}
     """
-    if not keyword or not product_title:
-        return {'match': 'N', 'reason': 'Missing title or keyword'}
-
     prompt = f"""
-    You are an SEO keyword quality evaluator for e-commerce product pages. Your task is to evaluate if a generated keyword is the BEST FIT for a specific product's PDP (Product Display Page).
+    You are an SEO keyword quality evaluator for e-commerce product pages. Your task is to evaluate if a generated keyword is a VALID match for a specific product's PDP.
 
     # EVALUATION CRITERIA
 
     ## Context
-    - Each product needs ONE specific keyword for its PDP
-    - Keywords must be specific to the exact product variant to avoid cannibalization
-    - Multiple products with similar keywords will compete against each other (cannibalization = BAD)
-    - PDPs need precise keywords that match the exact product being sold
+    - Keywords must likely lead a user to this product.
+    - **BROAD KEYWORDS ARE ACCEPTABLE** if this product is a core/canonical version of that term.
+    - Cannibalization is a concern, but do NOT reject a keyword just because it *could* apply to other variants, as long as it fits this one well.
 
     ## Evaluation Rules
 
     ### MATCH (Y - Good Keyword) IF:
-    1. **Exact Product Match**: Keyword matches the specific product variant
-       - Example: Product "Macallan 12 Year Old Double Cask" -> Keyword "macallan 12" = YES (age matches)
-       - Example: Product "Lagavulin 16 Year Old" -> Keyword "lagavulin 16" = YES (age matches)
+    1. **Exact Product Match**: Keyword matches the specific product variant.
+    2. **Core/Base Match (Broader Terms)**:
+       - **ACCEPT** broad terms if the product is a standard/representative version.
+       - **Electronics**: "Apple iPad 10.2 (9th Gen)" -> "ipad" = **YES** (It IS an iPad).
+       - **Furniture**: "Herman Miller Aeron Office Chair" -> "herman miller aeron" = **YES**.
+       - **Luggage**: "Samsonite Winfield 2 Hardside Luggage" -> "samsonite luggage" = **YES**.
+       - **Pets**: "Royal Canin Golden Retriever Puppy Food" -> "royal canin puppy food" = **YES**.
+       - **Toys**: "LEGO Star Wars Millennium Falcon" -> "lego millennium falcon" = **YES**.
+       - **Baby**: "Pampers Swaddlers Diapers Size 1" -> "pampers swaddlers" = **YES**.
 
-    2. **No Cannibalization Risk**: Keyword is unique enough to differentiate from similar products
-       - Example: Product "Baileys Irish Cream 70cl" -> Keyword "baileys irish cream" = YES (other sizes would use "baileys irish cream 1l")
-       - Example: Product "Veuve Clicquot Yellow Label" -> Keyword "veuve clicquot yellow label" = YES (different from "veuve clicquot rose")
-
-    3. **Appropriate Specificity**: Includes key differentiators (age, flavor, variant, size when critical)
-       - Example: Product "Jack Daniel's Tennessee Honey" -> Keyword "jack daniel's honey" = YES (flavor differentiates from standard)
-       - Example: Product "Johnnie Walker Blue Label" -> Keyword "johnnie walker blue label" = YES (variant critical)
-
-    4. **Search Intent Match**: Keyword reflects how users search for THIS SPECIFIC product
-       - Example: Product "Whispering Angel Rosé 2024" -> Keyword "whispering angel rose" = YES (users don't search vintages for value wines)
+    3. **Appropriate Specificity**: Includes key differentiators when necessary, but handles "implied" defaults.
+       - Example: "Whispering Angel Rosé" -> "whispering angel" = **YES** (The Rosé is the main product people mean).
 
     ### NO MATCH (N - Bad Keyword) IF:
-    1. **Wrong Product**: Keyword doesn't match the product at all
-       - Example: Product "Macallan 15 Year Old" -> Keyword "macallan 12" = NO (wrong age)
-       - Example: Product "Lagavulin 16" -> Keyword "lagavulin 8" = NO (wrong age)
+    1. **Factually Wrong**: Keyword describes a completely different product.
+       - Example: "Macallan 15" -> "macallan 12" = **NO** (Wrong age).
+       - Example: "Prosecco" -> "Champagne" = **NO**.
+       - Example: "iPhone 13 Case" -> "iphone 13" = **NO** (It's a case, not the phone).
 
-    2. **Cannibalization Risk**: Keyword is too broad and would fit multiple products
-       - Example: Product "Macallan 12 Double Cask" -> Keyword "macallan whisky" = NO (too broad, fits all Macallan products)
-       - Example: Product "Veuve Clicquot Yellow Label" -> Keyword "veuve clicquot" = NO (too broad, fits all VC products)
+    2. **Completely Misses the Point**:
+       - Example: "Red Wine Glass" -> "red wine" = **NO** (It's a glass, not wine).
+       - Example: "Dog Food Bowl" -> "dog food" = **NO**.
 
-    3. **Missing Critical Differentiator**: Keyword lacks key variant details
-       - Example: Product "Baileys Chocolate Liqueur" -> Keyword "baileys" = NO (missing flavor - would cannibalize "Baileys Irish Cream")
-       - Example: Product "Smirnoff Peach Vodka" -> Keyword "smirnoff vodka" = NO (missing flavor - would cannibalize standard Smirnoff)
-
-    4. **Over-Specified**: Keyword includes unnecessary details users don't search
-       - Example: Product "Whispering Angel Rosé 75cl" -> Keyword "whispering angel rose 75cl" = NO (bottle size unnecessary)
-       - Example: Product "Moët & Chandon Brut Imperial NV" -> Keyword "moet chandon brut imperial nv champagne" = NO (too verbose)
-
-    5. **Wrong Category/Type**: Keyword describes wrong product category
-       - Example: Product "Prosecco Spumante" -> Keyword "champagne" = NO (wrong category)
-       - Example: Product "Irish Whiskey" -> Keyword "scotch whisky" = NO (wrong type)
+    3. **Too Generic (Category Level)**:
+       - Example: "Jack Daniel's" -> "whisky" = **NO** (Too broad, it's a category).
+       - Example: "Sony Bravia TV" -> "electronics" = **NO**.
+       - Example: "Barbie Dreamhouse" -> "toys" = **NO**.
+       - *Exception*: If the brand IS the category leader, sometimes short is okay, but "toys" alone is usually too vague.
 
     # INPUT
     Product Title: "{product_title}"
