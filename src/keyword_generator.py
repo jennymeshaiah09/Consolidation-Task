@@ -511,19 +511,21 @@ def verify_keywords_bulk(
     keyword_col: str,
     progress_callback=None,
     model_name: str = "gemini-2.5-flash-lite",
-    max_workers: int = 10
+    max_workers: int = 20  # Adjusted per user request
 ) -> pd.DataFrame:
     """
-    Verify keywords in bulk using threads.
+    Verify keywords in bulk using threads with robust retry logic.
     """
     df = df.copy()
     client = get_gemini_client(model_name)
     if not client:
         raise ValueError("API Key not found or client init failed")
 
-    # Prepare results columns
-    df['Match'] = ""
-    df['Reason'] = ""
+    # Prepare results columns if not present
+    if 'Match' not in df.columns:
+        df['Match'] = ""
+    if 'Reason' not in df.columns:
+        df['Reason'] = ""
 
     total_items = len(df)
     completed = 0
@@ -531,17 +533,41 @@ def verify_keywords_bulk(
     def process_row(idx, row):
         t = str(row.get(title_col, ''))
         k = str(row.get(keyword_col, ''))
-        try:
-            res = verify_keyword_match(client, t, k)
-            return idx, res['match'], res['reason']
-        except Exception as e:
-            return idx, 'N', f"Error: {str(e)}"
+        
+        # Retry loop for rate limits
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                res = verify_keyword_match(client, t, k)
+                
+                # Check for rate limit error in reason (since verify_keyword_match catches exceptions)
+                reason_str = str(res.get('reason', ''))
+                if "429" in reason_str or "quota" in reason_str.lower() or "resource" in reason_str.lower():
+                    if attempt < max_retries - 1:
+                        time.sleep(2 * (attempt + 1))  # Exponential backoff
+                        continue
+                
+                return idx, res['match'], res['reason']
+                
+            except Exception as e:
+                # This block might not be hit if verify_keyword_match swallows errors, 
+                # but good to have for unexpected issues.
+                err_msg = str(e).lower()
+                if "429" in err_msg or "quota" in err_msg:
+                    if attempt < max_retries - 1:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                return idx, 'N', f"Error: {str(e)}"
+        
+        return idx, 'N', "Error: Rate limit exceeded after retries"
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
+        # Submit all tasks
         for idx, row in df.iterrows():
             futures.append(executor.submit(process_row, idx, row))
 
+        # Process results as they complete
         for future in as_completed(futures):
             idx, match, reason = future.result()
             df.at[idx, 'Match'] = match
@@ -549,7 +575,9 @@ def verify_keywords_bulk(
             
             completed += 1
             if progress_callback:
-                progress_callback(completed / total_items, completed, total_items)
+                # Update more frequently for smoother UI
+                if completed % 5 == 0 or completed == total_items:
+                    progress_callback(completed / total_items, completed, total_items)
 
     return df
 
