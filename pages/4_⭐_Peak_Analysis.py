@@ -171,10 +171,10 @@ def render_top_products():
             # Format columns
             worksheet = writer.sheets['Peak Analysis']
             for idx, col in enumerate(display_cols):
-                max_length = max(
-                    filtered_df[col].astype(str).map(len).max(),
-                    len(str(col))
-                ) + 2
+                value_len = filtered_df[col].map(
+                    lambda v: len("" if pd.isna(v) else str(v))
+                ).max()
+                max_length = max(int(value_len) if pd.notna(value_len) else 0, len(str(col))) + 2
                 worksheet.set_column(idx, idx, min(max_length, 50))
 
         output.seek(0)

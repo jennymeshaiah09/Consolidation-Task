@@ -3,7 +3,7 @@ import json
 import time
 import pandas as pd
 import unicodedata
-import google.generativeai as genai
+from . import gemini_client as genai
 from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import get_google_api_key

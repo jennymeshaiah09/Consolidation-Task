@@ -561,10 +561,10 @@ def render_export_section():
         # Auto-adjust column widths
         worksheet = writer.sheets['Consolidated Data']
         for idx, col in enumerate(consolidated_df.columns):
-            max_length = max(
-                consolidated_df[col].astype(str).map(len).max(),
-                len(str(col))
-            ) + 2
+            value_len = consolidated_df[col].map(
+                lambda v: len("" if pd.isna(v) else str(v))
+            ).max()
+            max_length = max(int(value_len) if pd.notna(value_len) else 0, len(str(col))) + 2
             worksheet.set_column(idx, idx, min(max_length, 50))
 
     output.seek(0)
@@ -630,9 +630,13 @@ def main():
         st.metric("Total Products", len(consolidated_df))
 
     with col3:
-        if 'Product Category' in consolidated_df.columns:
+        if 'Product Category L3' in consolidated_df.columns:
+            categories = consolidated_df['Product Category L3'].nunique()
+        elif 'Product Category' in consolidated_df.columns:
             categories = consolidated_df['Product Category'].nunique()
-            st.metric("Categories", categories)
+        else:
+            categories = 0
+        st.metric("Categories", categories)
 
     render_custom_divider()
 
