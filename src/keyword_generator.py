@@ -3,19 +3,14 @@ import json
 import time
 import pandas as pd
 import unicodedata
-import google.generativeai as genai
 from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from . import get_google_api_key
+from . import get_gemini_model
 
 # Configure API
 def get_gemini_client(model_name: str = "gemini-2.5-flash-lite"):
     """Initialize Google Gemini client."""
-    api_key = get_google_api_key()
-    if not api_key:
-        return None
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(model_name)
+    return get_gemini_model(model_name)
 
 # ============================================================================
 # PRODUCT TYPE WORDS - Must be preserved in keywords
@@ -126,10 +121,10 @@ def extract_entities(client, product_title: str) -> Dict[str, str]:
     """
 
     # Gemini 2.5 models use thinking tokens - need higher output limit
-    gen_config = genai.GenerationConfig(
-        temperature=0.0,
-        max_output_tokens=2048,
-    )
+    gen_config = {
+        "temperature": 0.0,
+        "max_output_tokens": 2048,
+    }
     response = client.generate_content(prompt, generation_config=gen_config)
     text = response.text.strip()
     # strip markdown code blocks if present
@@ -468,11 +463,11 @@ def verify_keyword_match(client, product_title: str, keyword: str) -> Dict[str, 
     }}
     """
 
-    gen_config = genai.GenerationConfig(
-        temperature=0.0,
-        max_output_tokens=128,
-        response_mime_type="application/json"
-    )
+    gen_config = {
+        "temperature": 0.0,
+        "max_output_tokens": 128,
+        "response_mime_type": "application/json",
+    }
 
     try:
         response = client.generate_content(prompt, generation_config=gen_config)

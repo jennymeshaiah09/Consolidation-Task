@@ -7,13 +7,12 @@ Refactored for High-Speed Batch Processing.
 import os
 import pandas as pd
 from typing import Optional, List, Dict
-import google.generativeai as genai
 import time
 import json
 import re
 from .taxonomy import get_taxonomy, format_categories_for_llm
 from .normalization import extract_leaf_category
-from . import get_google_api_key
+from . import get_gemini_model, get_google_api_key
 
 
 class QuotaExceededError(Exception):
@@ -23,11 +22,7 @@ class QuotaExceededError(Exception):
 
 def get_gemini_client(model_name: str = "gemini-2.5-flash-lite"):
     """Initialize Google Gemini client."""
-    api_key = get_google_api_key()
-    if not api_key:
-        return None
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(model_name)
+    return get_gemini_model(model_name)
 
 
 def generate_batch_keywords_api(
@@ -330,10 +325,10 @@ OUTPUT RULES:
         # SDK 0.8.4 has no thinking_config — 2.5 models use thinking by
         # default and thinking tokens count against max_output_tokens.
         # 2048 is needed so thinking + keyword both fit.
-        gen_config = genai.GenerationConfig(
-            temperature=0.0,
-            max_output_tokens=2048,
-        )
+        gen_config = {
+            "temperature": 0.0,
+            "max_output_tokens": 2048,
+        }
 
         for attempt in range(3):
             try:

@@ -10,8 +10,7 @@ Supports multiple validation strategies:
 
 import time
 from typing import List, Dict, Tuple
-import google.generativeai as genai
-from . import get_google_api_key
+from . import get_google_api_key, require_genai
 
 
 class CategoryValidator:
@@ -23,6 +22,7 @@ class CategoryValidator:
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY not found in environment variables or Streamlit secrets")
 
+        genai = require_genai()
         genai.configure(api_key=self.api_key)
 
         # Use the same model as keyword generation for consistency

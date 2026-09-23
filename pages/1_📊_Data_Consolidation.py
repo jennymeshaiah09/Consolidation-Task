@@ -8,13 +8,11 @@ import pandas as pd
 from io import BytesIO
 import time
 
-# Import core modules
+# Import core modules (LLM deps loaded lazily inside the helpers that need them)
 from src.ingestion import load_monthly_data, get_month_order
 from src.validation import validate_all_files
 from src.consolidation import consolidate_data
-from src.category_validator import CategoryValidator
-from src.taxonomy import load_all_categories, load_categories_for_product_type
-from src.llm_keywords import classify_other_products_batch, validate_api_key
+from src.taxonomy import load_categories_for_product_type
 
 # Import UI utilities
 from utils.ui_components import (
@@ -48,7 +46,8 @@ apply_custom_css()
 
 def run_classification(consolidated_df: pd.DataFrame, product_type: str):
     """Run LLM classification for 'Other' products"""
-    
+    from src.llm_keywords import classify_other_products_batch, validate_api_key
+
     if not validate_api_key():
         st.error("❌ Google API Key not configured. Please add GOOGLE_API_KEY to your .env file.")
         return
@@ -84,6 +83,9 @@ def run_classification(consolidated_df: pd.DataFrame, product_type: str):
 
 def validate_categories(consolidated_df: pd.DataFrame, product_type: str, is_test: bool = False):
     """Validate and fix product categories using LLM"""
+    from src.category_validator import CategoryValidator
+    from src.llm_keywords import validate_api_key
+
     if not validate_api_key():
         st.error("❌ Google API Key not configured. Please add GOOGLE_API_KEY to your .env file.")
         return
@@ -233,7 +235,7 @@ def process_uploaded_file(uploaded_file, product_type: str):
             st.success("✅ No 'Other' products found.")
 
     # 2. Extract Missing Brands (New Feature)
-    from src.llm_keywords import extract_brands_batch
+    from src.llm_keywords import extract_brands_batch, validate_api_key
     
     # Check for missing brands
     def is_missing_brand(val):
