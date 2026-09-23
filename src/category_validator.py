@@ -10,7 +10,7 @@ Supports multiple validation strategies:
 
 import time
 from typing import List, Dict, Tuple
-import google.generativeai as genai
+from . import gemini_client as genai
 from . import get_google_api_key
 
 

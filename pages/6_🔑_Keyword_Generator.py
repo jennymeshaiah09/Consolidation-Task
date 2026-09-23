@@ -382,7 +382,7 @@ if uploaded_file:
                     st.error("❌ GOOGLE_API_KEY not set.")
                     st.stop()
 
-                import google.generativeai as genai
+                from src import gemini_client as genai
                 from src import get_google_api_key
 
                 # --- Step 1: Single direct diagnostic call (shows raw response/error) ---

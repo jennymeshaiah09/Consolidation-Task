@@ -630,9 +630,13 @@ def main():
         st.metric("Total Products", len(consolidated_df))
 
     with col3:
-        if 'Product Category' in consolidated_df.columns:
+        if 'Product Category L3' in consolidated_df.columns:
+            categories = consolidated_df['Product Category L3'].nunique()
+        elif 'Product Category' in consolidated_df.columns:
             categories = consolidated_df['Product Category'].nunique()
-            st.metric("Categories", categories)
+        else:
+            categories = 0
+        st.metric("Categories", categories)
 
     render_custom_divider()
 
