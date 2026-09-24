@@ -27,8 +27,8 @@ from utils.state_manager import (
 
 # Page configuration
 st.set_page_config(
-    page_title="Phase 3: MSV Management",
-    page_icon="📈",
+    page_title="Meridian · MSV",
+    page_icon="◇",
     layout="wide"
 )
 
@@ -449,9 +449,8 @@ def main():
 
     # Page header
     render_page_header(
-        title="Phase 3: MSV Management",
-        subtitle="Upload and integrate Monthly Search Volume data",
-        icon="📈"
+        title="MSV management",
+        subtitle="Join search-volume exports and derive seasonal peaks.",
     )
 
     # Progress tracker
@@ -479,7 +478,7 @@ def main():
         return
 
     # Main content
-    st.markdown("### 📊 Current Data Status")
+    st.markdown("### Current data")
 
     col1, col2, col3 = st.columns(3)
 
@@ -502,7 +501,7 @@ def main():
     render_custom_divider()
 
     # Two options: Manual upload or API
-    st.markdown("### 🎯 Choose MSV Integration Method")
+    st.markdown("### MSV integration")
 
     tab1, tab2 = st.tabs(["📁 Manual Upload", "🤖 Automated API (Coming Soon)"])
 
@@ -651,7 +650,7 @@ def main():
     render_custom_divider()
 
     # Information section
-    st.markdown("### 📚 About MSV Data")
+    st.markdown("### About MSV")
 
     col1, col2 = st.columns([1, 1])
 
@@ -682,7 +681,7 @@ def main():
     render_custom_divider()
 
     # Navigation
-    st.markdown("### 🗺️ Navigation")
+    st.markdown("### Navigation")
 
     col1, col2, col3 = st.columns(3)
 

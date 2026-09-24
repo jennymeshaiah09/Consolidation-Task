@@ -41,8 +41,8 @@ from utils.state_manager import (
 
 # Page configuration
 st.set_page_config(
-    page_title="Phase 2: Keywords & Categories",
-    page_icon="🔤",
+    page_title="Meridian · Keywords",
+    page_icon="◇",
     layout="wide"
 )
 
@@ -67,7 +67,7 @@ def render_category_overview():
         st.warning("⚠️ Categories not found. Please re-run Phase 1 to generate L1, L2, L3 categories.")
         return
 
-    st.markdown("### 📁 Category Distribution")
+    st.markdown("### Category distribution")
 
     # Create tabs for L1, L2, L3
     tab1, tab2, tab3 = st.tabs(["Level 1 (Main)", "Level 2 (Sub)", "Level 3 (Specific)"])
@@ -135,7 +135,7 @@ def render_keyword_generation():
         st.error("No data available. Please complete Phase 1 first.")
         return
 
-    st.markdown("### 🔤 Keyword Generation")
+    st.markdown("### Keyword generation")
 
     # Mode selection
     st.markdown("**Choose Generation Mode:**")
@@ -443,7 +443,7 @@ def render_keyword_generation():
 
     # --- VERIFICATION SECTION (New) ---
     st.markdown("---")
-    st.markdown("### 🕵️ Step 2: Verify Keyword Quality")
+    st.markdown("### Verify keyword quality")
     st.info("Check if the generated/uploaded keywords are a valid fit for the products using AI (Strict Mode).")
 
     # Check if we have keywords to verify
@@ -511,7 +511,7 @@ def render_keyword_preview():
     total_keywords = (consolidated_df['Product Keyword'] != '').sum()
     total_products = len(consolidated_df)
 
-    st.markdown("### 🔍 Keyword Preview")
+    st.markdown("### Keyword preview")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -549,7 +549,7 @@ def render_export_section():
     if consolidated_df is None:
         return
 
-    st.markdown("### 💾 Export Final Results")
+    st.markdown("### Export")
 
     st.info("💡 Download the complete consolidated dataset with keywords and categories.")
 
@@ -590,9 +590,8 @@ def main():
 
     # Page header
     render_page_header(
-        title="Phase 2: Keywords & Categories",
-        subtitle="Generate SEO-friendly keywords using AI and review product categorization",
-        icon="🔤"
+        title="Keywords & categories",
+        subtitle="Generate MSV-ready search phrases and review taxonomy classification.",
     )
 
     # Progress tracker
@@ -620,7 +619,7 @@ def main():
         return
 
     # Display current data info
-    st.markdown("### 📊 Current Dataset")
+    st.markdown("### Current dataset")
     col1, col2, col3 = st.columns(3)
 
     with col1:

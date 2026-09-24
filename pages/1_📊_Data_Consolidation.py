@@ -33,8 +33,8 @@ from utils.state_manager import (
 
 # Page configuration
 st.set_page_config(
-    page_title="Phase 1: Data Consolidation",
-    page_icon="📊",
+    page_title="Meridian · Consolidate",
+    page_icon="◇",
     layout="wide"
 )
 
@@ -369,7 +369,7 @@ def process_uploaded_file(uploaded_file, product_type: str):
 
     # Category breakdown (3-level system)
     if all(col in consolidated_df.columns for col in ['Product Category L1', 'Product Category L2', 'Product Category L3']):
-        st.markdown("### 📊 Category Breakdown")
+        st.markdown("### Category breakdown")
 
         tab1, tab2, tab3 = st.tabs(["Level 1 (Main)", "Level 2 (Sub)", "Level 3 (Specific)"])
 
@@ -402,7 +402,7 @@ def process_uploaded_file(uploaded_file, product_type: str):
     # Navigation button
     col_left, col_center, col_right = st.columns([2, 1, 2])
     with col_center:
-        if st.button("Next: Generate Keywords →", type="primary", use_container_width=True):
+        if st.button("Next: Keywords", type="primary", use_container_width=True):
             st.switch_page("pages/2_🔤_Keywords_Categories.py")
 
 
@@ -414,9 +414,8 @@ def main():
 
     # Page header
     render_page_header(
-        title="Phase 1: Data Consolidation",
-        subtitle="Upload and consolidate monthly product data from multiple files",
-        icon="📊"
+        title="Data consolidation",
+        subtitle="Upload monthly catalogs, validate columns, and merge into one product master.",
     )
 
     # Progress tracker
@@ -433,10 +432,10 @@ def main():
         return
 
     # Main content
-    st.markdown("### 📦 Product Type Selection")
+    st.markdown("### Product type")
 
     product_type = st.selectbox(
-        "Select Product Type",
+        "Select product type",
         options=[
             "Alcoholic Beverages",
             "Pets",
@@ -456,32 +455,32 @@ def main():
         help="Choose the product category for your data"
     )
 
-    st.markdown("---")
-    st.markdown("### 📁 Upload Data Files")
+    render_custom_divider()
+    st.markdown("### Upload data")
 
     # File uploader
     uploaded_file = st.file_uploader(
-        "Upload ZIP file containing monthly data",
+        "ZIP of monthly CSV or Excel files",
         type=["zip"],
         help="Upload a ZIP file containing CSV/Excel files for each month"
     )
 
     # File format info
-    with st.expander("📋 File Requirements", expanded=False):
+    with st.expander("File requirements", expanded=False):
         st.markdown("""
-        **ZIP File Contents:**
-        - Files for Jan-Dec 2025
+        **ZIP contents**
+        - Files for Jan–Dec (any recent year)
         - Format: `Mon-2025.xlsx` or `Mon-2025.csv`
         - Example: `Jan-2025.xlsx`, `Feb-2025.csv`, `BWS Apr 2025.csv`
 
-        **Required Columns:**
+        **Required columns**
         - Product Title (or Title)
         - Brand
         - Availability
         - Price range max.
         - Popularity rank
 
-        **Note:** December file is mandatory.
+        December is mandatory.
         """)
 
     if uploaded_file is not None:
@@ -491,17 +490,18 @@ def main():
     # Show session data if already processed
     elif st.session_state.get('phase_1_complete', False):
         render_info_banner(
-            f"✅ Data already consolidated for {st.session_state.product_type}. Upload a new file to start over, or proceed to Phase 2.",
+            f"Data already consolidated for {st.session_state.product_type}. "
+            "Upload a new file to start over, or continue to keywords.",
             "info"
         )
 
-        st.markdown("### 📊 Current Data")
-        st.info(f"**Product Type:** {st.session_state.product_type}")
-        st.info(f"**Total Products:** {st.session_state.total_products}")
+        st.markdown("### Current data")
+        st.info(f"**Product type:** {st.session_state.product_type}")
+        st.info(f"**Total products:** {st.session_state.total_products}")
 
         # Show quick preview
         if st.session_state.consolidated_df is not None:
-            with st.expander("📋 View Data Preview"):
+            with st.expander("Data preview"):
                 st.dataframe(
                     st.session_state.consolidated_df.head(20),
                     use_container_width=True
@@ -510,7 +510,7 @@ def main():
         # Navigation button
         col_left, col_center, col_right = st.columns([2, 1, 2])
         with col_center:
-            if st.button("Next: Generate Keywords →", type="primary", use_container_width=True):
+            if st.button("Next: Keywords", type="primary", use_container_width=True):
                 st.switch_page("pages/2_🔤_Keywords_Categories.py")
 
 
