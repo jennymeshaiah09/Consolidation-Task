@@ -16,16 +16,16 @@ BRAND_TAGLINE = "Product data consolidation"
 
 NAV_ITEMS: List[Tuple[str, str, str]] = [
     ("Home", "Home", "Home.py"),
-    ("01", "Consolidate", "pages/1_📊_Data_Consolidation.py"),
-    ("02", "Keywords", "pages/2_🔤_Keywords_Categories.py"),
-    ("03", "MSV", "pages/3_📈_MSV_Management.py"),
-    ("04", "Peaks", "pages/4_⭐_Peak_Analysis.py"),
-    ("05", "Insights", "pages/5_💡_Insights.py"),
+    ("01", "Consolidate", "pages/01_Consolidate.py"),
+    ("02", "Keywords", "pages/02_Keywords.py"),
+    ("03", "MSV", "pages/03_MSV.py"),
+    ("04", "Peaks", "pages/04_Peaks.py"),
+    ("05", "Insights", "pages/05_Insights.py"),
 ]
 
 TOOL_ITEMS: List[Tuple[str, str, str]] = [
-    ("Gen", "Keyword Gen", "pages/6_🔑_Keyword_Generator.py"),
-    ("Chk", "Verifier", "pages/3_✅_Keyword_Verifier.py"),
+    ("Gen", "Keyword Gen", "pages/06_Keyword_Generator.py"),
+    ("Chk", "Verifier", "pages/07_Keyword_Verifier.py"),
 ]
 
 
@@ -651,7 +651,9 @@ def render_top_nav(current_page: str = "Home"):
 def render_header_navigation(current_page: str = "Phase 1"):
     """Compat wrapper used by existing pages."""
     render_brand_bar(current_page=current_page, phase_label=current_page)
-    render_top_nav(current_page=current_page)
+    # Home already has phase cards — skip redundant top button row there
+    if current_page != "Home":
+        render_top_nav(current_page=current_page)
 
 
 def render_page_header(title: str, subtitle: str, icon: str = ""):
@@ -749,7 +751,7 @@ def render_phase_card(
             use_container_width=True,
             type="primary" if status in ("Ready", "Complete", "In Progress") else "secondary",
         ):
-            # page_link may be a stem like "1_📊_Data_Consolidation" or full path
+            # page_link may be a stem like "01_Consolidate" or full path
             path = page_link
             if not path.endswith(".py"):
                 path = f"pages/{path}.py"
@@ -823,10 +825,10 @@ def render_sidebar_info(current_phase: Optional[Any] = None):
         c1, c2 = st.columns(2)
         with c1:
             if st.button("Generator", key="sb_gen", use_container_width=True):
-                st.switch_page("pages/6_🔑_Keyword_Generator.py")
+                st.switch_page("pages/06_Keyword_Generator.py")
         with c2:
             if st.button("Verifier", key="sb_ver", use_container_width=True):
-                st.switch_page("pages/3_✅_Keyword_Verifier.py")
+                st.switch_page("pages/07_Keyword_Verifier.py")
 
 
 def render_custom_divider():

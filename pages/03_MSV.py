@@ -467,7 +467,7 @@ def main():
         st.info("Please complete Phase 1 (Data Consolidation) and Phase 2 (Keywords & Categories) first.")
 
         if st.button("← Back to Phase 1"):
-            st.switch_page("pages/1_📊_Data_Consolidation.py")
+            st.switch_page("pages/01_Consolidate.py")
         return
 
     # Get consolidated data
@@ -687,7 +687,7 @@ def main():
 
     with col1:
         if st.button("← Back to Phase 2", use_container_width=True):
-            st.switch_page("pages/2_🔤_Keywords_Categories.py")
+            st.switch_page("pages/02_Keywords.py")
 
     with col2:
         if st.button("🏠 Back to Home", use_container_width=True):
@@ -699,7 +699,7 @@ def main():
 
         if has_msv:
             if st.button("Phase 4: Peak Analysis →", type="primary", use_container_width=True):
-                st.switch_page("pages/4_⭐_Peak_Analysis.py")
+                st.switch_page("pages/04_Peaks.py")
         else:
             st.button("Phase 4: Peak Analysis →", use_container_width=True, disabled=True, help="Upload MSV data first")
 

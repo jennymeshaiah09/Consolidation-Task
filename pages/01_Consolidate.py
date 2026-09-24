@@ -403,7 +403,7 @@ def process_uploaded_file(uploaded_file, product_type: str):
     col_left, col_center, col_right = st.columns([2, 1, 2])
     with col_center:
         if st.button("Next: Keywords", type="primary", use_container_width=True):
-            st.switch_page("pages/2_🔤_Keywords_Categories.py")
+            st.switch_page("pages/02_Keywords.py")
 
 
 def main():
@@ -511,7 +511,7 @@ def main():
         col_left, col_center, col_right = st.columns([2, 1, 2])
         with col_center:
             if st.button("Next: Keywords", type="primary", use_container_width=True):
-                st.switch_page("pages/2_🔤_Keywords_Categories.py")
+                st.switch_page("pages/02_Keywords.py")
 
 
 if __name__ == "__main__":

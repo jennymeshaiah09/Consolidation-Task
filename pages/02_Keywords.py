@@ -608,7 +608,7 @@ def main():
         st.info("👈 Go back to Phase 1 to upload and consolidate your data first.")
 
         if st.button("← Back to Phase 1"):
-            st.switch_page("pages/1_📊_Data_Consolidation.py")
+            st.switch_page("pages/01_Consolidate.py")
         return
 
     # Main content
@@ -664,15 +664,15 @@ def main():
 
     with col1:
         if st.button("← Back to Phase 1", use_container_width=True):
-            st.switch_page("pages/1_📊_Data_Consolidation.py")
+            st.switch_page("pages/01_Consolidate.py")
 
     with col2:
         if st.button("Phase 3: MSV Info →", use_container_width=True):
-            st.switch_page("pages/3_📈_MSV_Management.py")
+            st.switch_page("pages/03_MSV.py")
 
     with col3:
         if st.button("Skip to Phase 4 →", type="primary", use_container_width=True):
-            st.switch_page("pages/4_⭐_Peak_Analysis.py")
+            st.switch_page("pages/04_Peaks.py")
 
 
 if __name__ == "__main__":

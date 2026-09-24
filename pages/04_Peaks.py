@@ -252,7 +252,7 @@ def main():
         st.info("👈 Go back to Phase 1 to upload and consolidate your data first.")
 
         if st.button("← Back to Phase 1"):
-            st.switch_page("pages/1_📊_Data_Consolidation.py")
+            st.switch_page("pages/01_Consolidate.py")
         return
 
     # Main content
@@ -310,7 +310,7 @@ def main():
 
     with col1:
         if st.button("← Back to Phase 2", use_container_width=True):
-            st.switch_page("pages/2_🔤_Keywords_Categories.py")
+            st.switch_page("pages/02_Keywords.py")
 
     with col2:
         if st.button("🏠 Back to Home", use_container_width=True):
@@ -318,7 +318,7 @@ def main():
 
     with col3:
         if st.button("Phase 5: Insights →", type="primary", use_container_width=True):
-            st.switch_page("pages/5_💡_Insights.py")
+            st.switch_page("pages/05_Insights.py")
 
 
 if __name__ == "__main__":

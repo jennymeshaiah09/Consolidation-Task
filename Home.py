@@ -68,7 +68,7 @@ def render_phase_overview():
             title="Data consolidation",
             description="Upload monthly files, validate columns, and merge into one product master.",
             status=get_phase_status(1),
-            page_link="1_📊_Data_Consolidation",
+            page_link="01_Consolidate",
         )
     with col2:
         render_phase_card(
@@ -76,7 +76,7 @@ def render_phase_overview():
             title="Keywords & categories",
             description="Generate MSV-ready search phrases and review taxonomy classification.",
             status=get_phase_status(2),
-            page_link="2_🔤_Keywords_Categories",
+            page_link="02_Keywords",
         )
 
     col3, col4 = st.columns(2)
@@ -86,7 +86,7 @@ def render_phase_overview():
             title="MSV management",
             description="Join Monthly Search Volume exports and derive seasonal peaks.",
             status=get_phase_status(3),
-            page_link="3_📈_MSV_Management",
+            page_link="03_MSV",
         )
     with col4:
         render_phase_card(
@@ -94,7 +94,7 @@ def render_phase_overview():
             title="Peak analysis",
             description="Inspect popularity peaks and compare against search seasonality.",
             status=get_phase_status(4),
-            page_link="4_⭐_Peak_Analysis",
+            page_link="04_Peaks",
         )
 
     col5, col6 = st.columns(2)
@@ -104,7 +104,7 @@ def render_phase_overview():
             title="Insights",
             description="Category and brand rollups with a formatted Excel export.",
             status=get_phase_status(5),
-            page_link="5_💡_Insights",
+            page_link="05_Insights",
         )
     with col6:
         st.markdown(
@@ -120,10 +120,10 @@ def render_phase_overview():
         t1, t2 = st.columns(2)
         with t1:
             if st.button("Keyword generator", key="home_tool_gen", use_container_width=True):
-                st.switch_page("pages/6_🔑_Keyword_Generator.py")
+                st.switch_page("pages/06_Keyword_Generator.py")
         with t2:
             if st.button("Keyword verifier", key="home_tool_ver", use_container_width=True):
-                st.switch_page("pages/3_✅_Keyword_Verifier.py")
+                st.switch_page("pages/07_Keyword_Verifier.py")
 
 
 def render_getting_started():
