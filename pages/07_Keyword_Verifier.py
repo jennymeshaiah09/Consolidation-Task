@@ -28,8 +28,8 @@ from utils.ui_components import (
 
 # Page configuration
 st.set_page_config(
-    page_title="Keyword Verifier",
-    page_icon="✅",
+    page_title="Meridian · Verifier",
+    page_icon="◇",
     layout="wide"
 )
 
@@ -40,9 +40,8 @@ def main():
     render_header_navigation(current_page="Verifier")
 
     render_page_header(
-        title="Keyword Verifier",
-        subtitle="Validate if your keywords actually match your products using AI.",
-        icon="✅"
+        title="Keyword verifier",
+        subtitle="Check whether generated keywords still describe the product.",
     )
 
     render_sidebar_info(current_phase="Verifier")
@@ -61,7 +60,7 @@ def main():
          return
 
     # Tabs
-    tab1, tab2 = st.tabs(["🔎 Single Check", "📁 Bulk Upload"])
+    tab1, tab2 = st.tabs(["Single check", "Bulk upload"])
 
     # --- Tab 1: Single Check ---
     with tab1:

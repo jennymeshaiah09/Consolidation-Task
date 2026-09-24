@@ -27,8 +27,8 @@ from utils.state_manager import (
 
 # Page configuration
 st.set_page_config(
-    page_title="Phase 3: MSV Management",
-    page_icon="📈",
+    page_title="Meridian · MSV",
+    page_icon="◇",
     layout="wide"
 )
 
@@ -449,9 +449,8 @@ def main():
 
     # Page header
     render_page_header(
-        title="Phase 3: MSV Management",
-        subtitle="Upload and integrate Monthly Search Volume data",
-        icon="📈"
+        title="MSV management",
+        subtitle="Join search-volume exports and derive seasonal peaks.",
     )
 
     # Progress tracker
@@ -468,7 +467,7 @@ def main():
         st.info("Please complete Phase 1 (Data Consolidation) and Phase 2 (Keywords & Categories) first.")
 
         if st.button("← Back to Phase 1"):
-            st.switch_page("pages/1_📊_Data_Consolidation.py")
+            st.switch_page("pages/01_Consolidate.py")
         return
 
     # Get consolidated data
@@ -479,7 +478,7 @@ def main():
         return
 
     # Main content
-    st.markdown("### 📊 Current Data Status")
+    st.markdown("### Current data")
 
     col1, col2, col3 = st.columns(3)
 
@@ -502,7 +501,7 @@ def main():
     render_custom_divider()
 
     # Two options: Manual upload or API
-    st.markdown("### 🎯 Choose MSV Integration Method")
+    st.markdown("### MSV integration")
 
     tab1, tab2 = st.tabs(["📁 Manual Upload", "🤖 Automated API (Coming Soon)"])
 
@@ -651,7 +650,7 @@ def main():
     render_custom_divider()
 
     # Information section
-    st.markdown("### 📚 About MSV Data")
+    st.markdown("### About MSV")
 
     col1, col2 = st.columns([1, 1])
 
@@ -682,13 +681,13 @@ def main():
     render_custom_divider()
 
     # Navigation
-    st.markdown("### 🗺️ Navigation")
+    st.markdown("### Navigation")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button("← Back to Phase 2", use_container_width=True):
-            st.switch_page("pages/2_🔤_Keywords_Categories.py")
+            st.switch_page("pages/02_Keywords.py")
 
     with col2:
         if st.button("🏠 Back to Home", use_container_width=True):
@@ -700,7 +699,7 @@ def main():
 
         if has_msv:
             if st.button("Phase 4: Peak Analysis →", type="primary", use_container_width=True):
-                st.switch_page("pages/4_⭐_Peak_Analysis.py")
+                st.switch_page("pages/04_Peaks.py")
         else:
             st.button("Phase 4: Peak Analysis →", use_container_width=True, disabled=True, help="Upload MSV data first")
 
