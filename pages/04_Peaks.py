@@ -26,8 +26,8 @@ from utils.state_manager import (
 
 # Page configuration
 st.set_page_config(
-    page_title="Phase 4: Peak Analysis",
-    page_icon="⭐",
+    page_title="Meridian · Peaks",
+    page_icon="◇",
     layout="wide"
 )
 
@@ -40,7 +40,7 @@ apply_custom_css()
 
 def render_algorithm_explanation():
     """Explain the peak popularity and seasonality algorithms"""
-    st.markdown("### 📐 Algorithm Explanation")
+    st.markdown("### How peaks are calculated")
 
     with st.expander("How Peaks are Calculated", expanded=False):
         col1, col2 = st.columns(2)
@@ -74,7 +74,7 @@ def render_peak_distribution():
     if consolidated_df is None:
         return
 
-    st.markdown("### 📊 Peak Month Distribution")
+    st.markdown("### Peak month distribution")
 
     # Helper to count peaks
     def get_peak_counts(column_name):
@@ -126,7 +126,7 @@ def render_top_products():
     if consolidated_df is None:
         return
 
-    st.markdown("### 🏆 Top Products with Peak Data")
+    st.markdown("### Top products")
 
     # Filter columns to display
     base_cols = ['Product Title', 'Product Brand', 'Product Category L3']
@@ -193,7 +193,7 @@ def render_filters():
     if consolidated_df is None:
         return
 
-    st.markdown("### 🔍 Filter by Peak Months (Seasonality)")
+    st.markdown("### Filter by peak months")
 
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -234,9 +234,8 @@ def main():
 
     # Page header
     render_page_header(
-        title="Phase 4: Peak Popularity Analysis",
-        subtitle="Analyze peak popularity patterns and identify seasonal trends",
-        icon="⭐"
+        title="Peak analysis",
+        subtitle="Inspect popularity peaks and compare against search seasonality.",
     )
 
     # Progress tracker
@@ -253,7 +252,7 @@ def main():
         st.info("👈 Go back to Phase 1 to upload and consolidate your data first.")
 
         if st.button("← Back to Phase 1"):
-            st.switch_page("pages/1_📊_Data_Consolidation.py")
+            st.switch_page("pages/01_Consolidate.py")
         return
 
     # Main content
@@ -264,7 +263,7 @@ def main():
         return
 
     # Display current data info
-    st.markdown("### 📊 Dataset Overview")
+    st.markdown("### Dataset overview")
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -311,7 +310,7 @@ def main():
 
     with col1:
         if st.button("← Back to Phase 2", use_container_width=True):
-            st.switch_page("pages/2_🔤_Keywords_Categories.py")
+            st.switch_page("pages/02_Keywords.py")
 
     with col2:
         if st.button("🏠 Back to Home", use_container_width=True):
@@ -319,7 +318,7 @@ def main():
 
     with col3:
         if st.button("Phase 5: Insights →", type="primary", use_container_width=True):
-            st.switch_page("pages/5_💡_Insights.py")
+            st.switch_page("pages/05_Insights.py")
 
 
 if __name__ == "__main__":
