@@ -41,8 +41,9 @@ Thumbs.db
 # Test data
 *.zip
 
-# Streamlit
-.streamlit/
+# Streamlit (keep shared theme; ignore local secrets)
+.streamlit/*
+!.streamlit/config.toml
 *.streamlit
 
 # Consolidated output files

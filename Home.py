@@ -1,6 +1,6 @@
 """
-Product Data Consolidation Tool - Homepage
-Modern multi-phase data processing workflow
+Meridian — Product Data Consolidation Pipeline
+Homepage
 """
 
 import streamlit as st
@@ -11,216 +11,167 @@ from utils.ui_components import (
     render_metric_card,
     render_custom_divider,
     render_info_banner,
-    render_header_navigation
+    render_header_navigation,
+    render_section_heading,
 )
 from utils.state_manager import (
     init_session_state,
     get_session_stats,
     get_phase_status,
-    clear_session_data
+    clear_session_data,
 )
 
-# Page configuration
 st.set_page_config(
-    page_title="Product Data Consolidation Pipeline",
-    page_icon="🎯",
+    page_title="Meridian",
+    page_icon="◇",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Initialize session state
 init_session_state()
-
-# Apply custom CSS
 apply_custom_css()
 
 
 def render_quick_stats():
-    """Render quick stats dashboard if data exists"""
+    """Session metrics when data exists."""
     stats = get_session_stats()
+    if not stats:
+        return
 
-    if stats:
-        st.markdown("### 📊 Current Session Stats")
+    render_section_heading("Session", "Live snapshot from the current pipeline run.")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        render_metric_card("Product type", stats["product_type"])
+    with col2:
+        render_metric_card("Products", str(stats["total_products"]))
+    with col3:
+        render_metric_card("Categories", str(stats["categories_count"]))
+    with col4:
+        render_metric_card("Keywords", str(stats["keywords_generated"]))
 
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            render_metric_card(
-                "Product Type",
-                stats['product_type'],
-                "🏷️"
-            )
-
-        with col2:
-            render_metric_card(
-                "Total Products",
-                str(stats['total_products']),
-                "📦"
-            )
-
-        with col3:
-            render_metric_card(
-                "Categories",
-                str(stats['categories_count']),
-                "📁"
-            )
-
-        with col4:
-            render_metric_card(
-                "Keywords Generated",
-                str(stats['keywords_generated']),
-                "🔤"
-            )
-
-        if stats['last_updated']:
-            st.caption(f"Last updated: {stats['last_updated'].strftime('%Y-%m-%d %H:%M:%S')}")
-
-        render_custom_divider()
+    if stats.get("last_updated"):
+        st.caption(f"Updated {stats['last_updated'].strftime('%Y-%m-%d %H:%M')}")
+    render_custom_divider()
 
 
 def render_phase_overview():
-    """Render overview of all phases"""
-    st.markdown("### 🗺️ Pipeline Phases")
-    st.markdown("Navigate through each phase of the data consolidation pipeline.")
+    """Pipeline phase cards."""
+    render_section_heading(
+        "Pipeline",
+        "Move through each phase in order. Data carries forward automatically.",
+    )
 
-    # Row 1: Phase 1 and 2
     col1, col2 = st.columns(2)
-
     with col1:
         render_phase_card(
             phase_num=1,
-            title="Data Consolidation",
-            description="Upload monthly data files, validate, and consolidate into a unified dataset.",
+            title="Data consolidation",
+            description="Upload monthly files, validate columns, and merge into one product master.",
             status=get_phase_status(1),
-            icon="📊",
-            page_link="1_📊_Data_Consolidation"
+            page_link="01_Consolidate",
         )
-
     with col2:
         render_phase_card(
             phase_num=2,
-            title="Keywords & Categories",
-            description="Generate SEO-friendly keywords using AI and categorize products automatically.",
+            title="Keywords & categories",
+            description="Generate MSV-ready search phrases and review taxonomy classification.",
             status=get_phase_status(2),
-            icon="🔤",
-            page_link="2_🔤_Keywords_Categories"
+            page_link="02_Keywords",
         )
 
-    # Row 2: Phase 3 and 4
     col3, col4 = st.columns(2)
-
     with col3:
         render_phase_card(
             phase_num=3,
-            title="MSV Management",
-            description="Monthly Search Volume data handling (managed by teammate Tenny).",
+            title="MSV management",
+            description="Join Monthly Search Volume exports and derive seasonal peaks.",
             status=get_phase_status(3),
-            icon="📈",
-            page_link="3_📈_MSV_Management"
+            page_link="03_MSV",
         )
-
     with col4:
         render_phase_card(
             phase_num=4,
-            title="Peak Analysis",
-            description="Analyze peak popularity patterns and identify seasonal trends.",
+            title="Peak analysis",
+            description="Inspect popularity peaks and compare against search seasonality.",
             status=get_phase_status(4),
-            icon="⭐",
-            page_link="4_⭐_Peak_Analysis"
+            page_link="04_Peaks",
         )
 
-    # Row 3: Phase 5
-    col5, _ = st.columns(2)
-
+    col5, col6 = st.columns(2)
     with col5:
         render_phase_card(
             phase_num=5,
-            title="Insights & Analytics",
-            description="Advanced analytics and insights from consolidated data (coming soon).",
+            title="Insights",
+            description="Category and brand rollups with a formatted Excel export.",
             status=get_phase_status(5),
-            icon="💡",
-            page_link="5_💡_Insights"
+            page_link="05_Insights",
         )
+    with col6:
+        st.markdown(
+            """
+<div class="m-phase">
+  <div class="m-phase-num">Tools</div>
+  <h3>Standalone utilities</h3>
+  <p>Run keyword generation or verification without walking the full pipeline.</p>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        t1, t2 = st.columns(2)
+        with t1:
+            if st.button("Keyword generator", key="home_tool_gen", use_container_width=True):
+                st.switch_page("pages/06_Keyword_Generator.py")
+        with t2:
+            if st.button("Keyword verifier", key="home_tool_ver", use_container_width=True):
+                st.switch_page("pages/07_Keyword_Verifier.py")
 
 
 def render_getting_started():
-    """Render getting started guide for new users"""
-    stats = get_session_stats()
+    """First-run guidance."""
+    if get_session_stats():
+        return
 
-    if not stats:  # Only show for new users
-        st.markdown("### 🚀 Getting Started")
-
-        render_info_banner(
-            "Welcome! Start by uploading your monthly data in Phase 1, then proceed through each phase in order."
-        )
-
-        st.markdown("""
-        **Quick Start Guide:**
-
-        1. **Phase 1** - Upload a ZIP file containing monthly product data (Jan-Dec 2025)
-        2. **Phase 2** - Generate SEO keywords using AI and review categorization
-        3. **Phase 3** - MSV data will be handled by Tenny (informational phase)
-        4. **Phase 4** - Review peak popularity analysis and trends
-        5. **Phase 5** - Explore insights (coming soon)
-
-        **Requirements:**
-        - ZIP file with monthly CSV/Excel files
-        - Files should contain: Product Title, Brand, Availability, Price, Popularity rank
-        - December file is mandatory
-        """)
+    render_section_heading("Start here", "One ZIP of monthly catalogs gets you into the pipeline.")
+    render_info_banner(
+        "Begin in Phase 01 with a ZIP of monthly CSV/Excel files. December is required. "
+        "Then generate keywords, attach MSV, and review peaks."
+    )
+    st.markdown(
+        """
+- **Inputs:** Product Title, Brand, Availability, Price range max, Popularity rank  
+- **Taxonomy:** Categories & subs Excel (14 product types, ~866 categories)  
+- **Keywords:** Hybrid / RAKE / Gemini — optimized for non-zero MSV  
+        """
+    )
 
 
 def main():
-    """Main homepage rendering"""
     render_header_navigation(current_page="Home")
+    render_hero_section()
 
-    # Hero Section
-    render_hero_section(
-        title="🎯 Product Data Consolidation Pipeline",
-        subtitle="Modern multi-phase data processing workflow for e-commerce analytics"
-    )
-
-    # Sidebar
     with st.sidebar:
-        st.markdown("### 🏠 Home")
-        st.markdown("You are on the homepage.")
-
+        st.markdown("### Meridian")
+        st.caption("Product data consolidation pipeline")
         st.markdown("---")
-
-        # Reset button
-        if st.button("🔄 Start Fresh Session", help="Clear all data and start over"):
+        if st.button("Start fresh session", help="Clear all pipeline data", use_container_width=True):
             clear_session_data()
             st.rerun()
-
         st.markdown("---")
+        st.markdown("**Includes**")
+        st.markdown(
+            """
+- Taxonomy classification  
+- MSV-ready keywords  
+- Peak popularity & seasonality  
+- Excel export  
+            """
+        )
 
-        st.markdown("### ℹ️ About")
-        st.markdown("""
-        This tool consolidates monthly product data and enriches it with:
-        - LLM-generated keywords
-        - Automatic categorization
-        - Peak popularity analysis
-        - MSV integration (optional)
-        """)
-
-        st.markdown("---")
-
-        st.markdown("### 📚 Resources")
-        st.markdown("- [View Documentation](PLAN.md)")
-        st.markdown("- Product Types: BWS, Pets, Electronics")
-
-    # Quick Stats (if data exists)
     render_quick_stats()
-
-    # Phase Overview
     render_phase_overview()
-
-    # Getting Started (for new users)
     render_getting_started()
-
-    # Footer
     render_custom_divider()
-    st.caption("Product Data Consolidation Tool | Built with Streamlit & Google Gemini AI")
+    st.caption("Meridian · Streamlit · Google Gemini")
 
 
 if __name__ == "__main__":

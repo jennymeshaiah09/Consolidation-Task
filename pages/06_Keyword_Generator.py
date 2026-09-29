@@ -38,21 +38,30 @@ except ImportError:
 
 # Page config
 st.set_page_config(
-    page_title="Keyword Generator",
-    page_icon="🔑",
+    page_title="Meridian · Keyword Generator",
+    page_icon="◇",
     layout="wide"
 )
 
-st.title("🔑 Keyword Generator")
-st.markdown("""
-**MSV-Optimized Keyword Extraction**
+from utils.ui_components import (
+    apply_custom_css,
+    render_header_navigation,
+    render_page_header,
+    render_info_banner,
+)
 
-This tool generates search-friendly keywords (2-4 words) optimized for Monthly Search Volume.
-It addresses common issues that cause 0 MSV keywords.
-""")
+apply_custom_css()
+render_header_navigation(current_page="Generator")
+render_page_header(
+    title="Keyword generator",
+    subtitle="Extract MSV-ready search phrases with Hybrid, RAKE, Advanced, or Gemini methods.",
+)
+render_info_banner(
+    "Optimized for 2–4 word keywords. Strips sizes, ABV, vintages, gift language, and retailer noise."
+)
 
 # Sidebar options
-st.sidebar.header("⚙️ Settings")
+st.sidebar.header("Settings")
 
 method_options = ["Hybrid (Recommended)", "RAKE", "LLM (API)"]
 if HAS_ADVANCED:
