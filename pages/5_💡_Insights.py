@@ -456,8 +456,11 @@ def _write_all_data_sheet(writer, export_df, sheet_name='All Data'):
     
     # --- Auto-fit column widths ---
     for idx, col in enumerate(final_cols):
+        value_len = ordered_df[col].map(
+            lambda v: len("" if pd.isna(v) else str(v))
+        ).max()
         max_len = min(
-            max(ordered_df[col].astype(str).map(len).max(), len(str(col))) + 2,
+            max(int(value_len) if pd.notna(value_len) else 0, len(str(col))) + 2,
             50
         )
         worksheet.set_column(idx, idx, max_len)

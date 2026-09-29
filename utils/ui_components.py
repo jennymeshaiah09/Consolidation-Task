@@ -401,10 +401,6 @@ def render_phase_card(
 ):
     """Render phase card for homepage"""
     status_badge = render_status_badge(status)
-    button_html = ""
-
-    if page_link:
-        button_html = f'<a href="{page_link}" style="text-decoration: none;"><button style="background: linear-gradient(135deg, #10b981, #14b8a6); color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; margin-top: 16px;">Enter Phase →</button></a>'
 
     st.markdown(f"""
     <div class="phase-card">
@@ -412,9 +408,12 @@ def render_phase_card(
         <h3 style="color: var(--dark); margin-bottom: 8px;">Phase {phase_num}: {title}</h3>
         <p style="color: #64748b; margin-bottom: 12px;">{description}</p>
         {status_badge}
-        {button_html}
     </div>
     """, unsafe_allow_html=True)
+
+    if page_link:
+        target = page_link if str(page_link).endswith(".py") else f"pages/{page_link}.py"
+        st.page_link(target, label="Enter Phase →")
 
 
 def render_progress_tracker(current_phase: int, total_phases: int = 5):

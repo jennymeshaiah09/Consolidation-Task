@@ -7,7 +7,7 @@ Refactored for High-Speed Batch Processing.
 import os
 import pandas as pd
 from typing import Optional, List, Dict
-import google.generativeai as genai
+from . import gemini_client as genai
 import time
 import json
 import re
