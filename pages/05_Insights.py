@@ -25,8 +25,8 @@ from utils.state_manager import (
 
 # Page configuration
 st.set_page_config(
-    page_title="Phase 5: Insights & Analytics",
-    page_icon="💡",
+    page_title="Meridian · Insights",
+    page_icon="◇",
     layout="wide"
 )
 
@@ -506,7 +506,7 @@ def _get_color_for_value(value, min_val, max_val, invert=False):
 
 def render_excel_export_section(df, cat_agg, brand_agg):
     """Two downloads: raw pipeline data and full insights report — both contain all columns."""
-    st.markdown("### 📤 Export")
+    st.markdown("### Export")
 
     # Deduplicate columns once (safety net for double-merged MSV data)
     export_df = df.loc[:, ~df.columns.duplicated(keep='first')]
@@ -678,9 +678,8 @@ def main():
     render_header_navigation(current_page="Phase 5")
 
     render_page_header(
-        title="Phase 5: Insights & Analytics",
-        subtitle="Deep dive into Product, Category, and Brand seasonality",
-        icon="💡"
+        title="Insights",
+        subtitle="Seasonality, category, and brand rollups with Excel export.",
     )
 
     render_progress_tracker(current_phase=5)
@@ -716,7 +715,7 @@ def main():
     
     # 1. Products Tab
     with tab1:
-        st.markdown("### 📅 Products Peaking by Month")
+        st.markdown("### Products peaking by month")
         month_filter = st.selectbox("Select Peak Month", ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Unknown'])
         
         filtered = df[df['Calculated Peak Month'] == month_filter].sort_values('Peak Month Avg MSV', ascending=False)
@@ -731,7 +730,7 @@ def main():
     
     # 2. Categories Tab
     with tab2:
-        st.markdown("### 📂 Categories by Peak Month")
+        st.markdown("### Categories by peak month")
         col1, col2 = st.columns([2, 1])
         with col1:
              st.dataframe(
@@ -747,7 +746,7 @@ def main():
 
     # 3. Brands Tab
     with tab3:
-        st.markdown("### 🏷️ Brands by Peak Month")
+        st.markdown("### Brands by peak month")
         col1, col2 = st.columns([2, 1])
         with col1:
             st.dataframe(
