@@ -10,8 +10,13 @@ import time
 
 # Import core modules (LLM deps loaded lazily inside the helpers that need them)
 from src.ingestion import load_monthly_data, get_month_order
-from src.validation import validate_all_files
-from src.consolidation import consolidate_data
+from src.validation import (
+    validate_all_files,
+    guess_column_mapping,
+    apply_column_mapping,
+    MAPPABLE_FIELDS,
+)
+from src.consolidation import consolidate_data, resolve_snapshot_month
 from src.taxonomy import load_categories_for_product_type
 
 # Import UI utilities
@@ -28,8 +33,10 @@ from utils.ui_components import (
 from utils.state_manager import (
     init_session_state,
     save_consolidation_results,
-    check_phase_prerequisites
+    check_phase_prerequisites,
+    MAX_ZIP_BYTES,
 )
+from utils.sample_data import build_sample_catalog_zip
 
 # Page configuration
 st.set_page_config(
@@ -49,7 +56,7 @@ def run_classification(consolidated_df: pd.DataFrame, product_type: str):
     from src.llm_keywords import classify_other_products_batch, validate_api_key
 
     if not validate_api_key():
-        st.error("❌ Google API Key not configured. Please add GOOGLE_API_KEY to your .env file.")
+        st.error("Add a Gemini API key in the sidebar to classify products.")
         return
 
     # Progress bar and status
@@ -87,7 +94,7 @@ def validate_categories(consolidated_df: pd.DataFrame, product_type: str, is_tes
     from src.llm_keywords import validate_api_key
 
     if not validate_api_key():
-        st.error("❌ Google API Key not configured. Please add GOOGLE_API_KEY to your .env file.")
+        st.error("Add a Gemini API key in the sidebar to review categories.")
         return
 
     # Determine category column
@@ -157,63 +164,74 @@ def validate_categories(consolidated_df: pd.DataFrame, product_type: str, is_tes
 
 
 
-def process_uploaded_file(uploaded_file, product_type: str):
-    """Process the uploaded ZIP file and display results"""
+def _upload_token(uploaded_file) -> str:
+    return f"{uploaded_file.name}:{getattr(uploaded_file, 'size', 0)}"
 
-    # Skip re-processing if already done for this exact file and product type.
-    # Streamlit re-runs the script on every widget interaction (including button clicks),
-    # so the file uploader still holds the previous file — guard against redundant work.
-    if (st.session_state.get('phase_1_complete', False)
-            and st.session_state.get('_uploaded_file_name') == uploaded_file.name
-            and st.session_state.get('product_type') == product_type):
+
+def _load_zip(uploaded_file):
+    """Read a ZIP once per file and keep the monthly frames in session."""
+    token = _upload_token(uploaded_file)
+    if (
+        st.session_state.get("_upload_token") == token
+        and st.session_state.get("pending_monthly")
+    ):
+        return st.session_state.pending_monthly, []
+
+    if getattr(uploaded_file, "size", 0) > MAX_ZIP_BYTES:
+        limit_mb = MAX_ZIP_BYTES // (1024 * 1024)
+        return None, [f"This ZIP is over the {limit_mb} MB limit."]
+
+    monthly_data, load_errors = load_monthly_data(BytesIO(uploaded_file.getvalue()))
+    if load_errors:
+        return None, load_errors
+
+    st.session_state.pending_monthly = monthly_data
+    st.session_state._upload_token = token
+    return monthly_data, []
+
+
+def process_uploaded_file(monthly_data, product_type: str, snapshot_choice: str, run_key: str):
+    """Consolidate mapped monthly files and show the Phase 1 result."""
+
+    # Skip re-processing when this exact mapping was already saved.
+    if (
+        st.session_state.get("phase_1_complete", False)
+        and st.session_state.get("_uploaded_file_name") == run_key
+        and st.session_state.get("product_type") == product_type
+    ):
         consolidated_df = st.session_state.consolidated_df
         st.success(f"✅ Loaded {len(consolidated_df)} unique products (cached)")
     else:
-        # Read uploaded file
-        zip_bytes = BytesIO(uploaded_file.read())
-
-        # Step 1: Load and parse files
-        with st.spinner("📂 Loading files from ZIP..."):
-            monthly_data, load_errors = load_monthly_data(zip_bytes)
-
-        if load_errors:
-            st.error("**File Loading Errors:**")
-            for error in load_errors:
-                st.error(f"• {error}")
-            return
-
-        # Display loaded files
+        months_loaded = sorted(monthly_data.keys(), key=lambda x: get_month_order().index(x) if x in get_month_order() else 99)
         st.success(f"✅ Loaded {len(monthly_data)} monthly files")
-
-        # Show which months were loaded
-        months_loaded = sorted(monthly_data.keys(), key=lambda x: get_month_order().index(x))
         st.info(f"📅 Months loaded: {', '.join(months_loaded)}")
 
-        # Step 2: Validate files
-        with st.spinner("🔍 Validating data files..."):
-            is_valid, validation_errors = validate_all_files(monthly_data)
-
+        is_valid, validation_errors = validate_all_files(monthly_data)
         if not is_valid:
-            st.error("**Validation Errors:**")
+            st.error("**Validation errors**")
             for error in validation_errors:
                 st.error(f"• {error}")
             return
 
-        st.success("✅ All files validated successfully")
+        preferred = None if snapshot_choice == "Latest available" else snapshot_choice
+        snapshot_month, snapshot_warning = resolve_snapshot_month(monthly_data, preferred)
+        if snapshot_warning:
+            st.warning(snapshot_warning)
+        if snapshot_month:
+            st.caption(f"Price and availability come from {snapshot_month}.")
 
-        # Step 3: Consolidate data
         with st.spinner("🔄 Consolidating data..."):
-            consolidated_df = consolidate_data(monthly_data, product_type)
+            consolidated_df = consolidate_data(monthly_data, product_type, snapshot_month)
 
         if consolidated_df.empty:
-            st.error("No data to consolidate. Please check your input files.")
+            st.error("No data to consolidate. Check that the title column is mapped.")
             return
 
         st.success(f"✅ Consolidated {len(consolidated_df)} unique products")
 
-        # Save to session state
         save_consolidation_results(product_type, monthly_data, consolidated_df)
-        st.session_state['_uploaded_file_name'] = uploaded_file.name
+        st.session_state.snapshot_month = snapshot_month
+        st.session_state["_uploaded_file_name"] = run_key
 
     # Category Validation & Classification Section
     st.markdown("---")
@@ -248,7 +266,7 @@ def process_uploaded_file(uploaded_file, product_type: str):
             st.warning(f"⚠️ {missing_brand_count} products missing Brand.")
             if st.button(f"🏷️ Auto-Extract Missing Brands", type="primary", use_container_width=True):
                 if not validate_api_key():
-                    st.error("❌ Google API Key not configured.")
+                    st.error("Add a Gemini API key in the sidebar to fill missing brands.")
                 else:
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -395,7 +413,7 @@ def process_uploaded_file(uploaded_file, product_type: str):
     # Next step prompt
     render_custom_divider()
     render_info_banner(
-        "✨ Phase 1 Complete! Proceed to Phase 2 to generate SEO keywords using AI.",
+        "Phase 1 is done. Next, generate keywords. Fast mode does not need an API key.",
         "info"
     )
 
@@ -437,6 +455,7 @@ def main():
     product_type = st.selectbox(
         "Select product type",
         options=[
+            "General catalog",
             "Alcoholic Beverages",
             "Pets",
             "Electronics",
@@ -452,40 +471,87 @@ def main():
             "Cameras & Optics",
             "Hardware",
         ],
-        help="Choose the product category for your data"
+        help="General catalog keeps your own category column, or leaves categories unset. A named vertical uses the built-in taxonomy when you do not map a category.",
     )
 
     render_custom_divider()
     st.markdown("### Upload data")
 
-    # File uploader
+    st.download_button(
+        "Download a sample catalog",
+        data=build_sample_catalog_zip(),
+        file_name="meridian-sample-catalog.zip",
+        mime="application/zip",
+    )
+
     uploaded_file = st.file_uploader(
         "ZIP of monthly CSV or Excel files",
         type=["zip"],
-        help="Upload a ZIP file containing CSV/Excel files for each month"
+        help=f"Up to {MAX_ZIP_BYTES // (1024 * 1024)} MB. Name files like Jan-2024.csv.",
     )
 
-    # File format info
     with st.expander("File requirements", expanded=False):
         st.markdown("""
         **ZIP contents**
-        - Files for Jan–Dec (any recent year)
-        - Format: `Mon-2025.xlsx` or `Mon-2025.csv`
-        - Example: `Jan-2025.xlsx`, `Feb-2025.csv`, `BWS Apr 2025.csv`
+        - One file per month, any year
+        - Names like `Jan-2024.csv`, `Apr 2024.xlsx`, or `Catalog Jun 2024.csv`
 
-        **Required columns**
-        - Product Title (or Title)
-        - Brand
-        - Availability
-        - Price range max.
-        - Popularity rank
+        **Columns**
+        - A product title is required
+        - Brand, availability, price, popularity rank, and category are optional
+        - Match your headers on the next step. Office-style names are recognised automatically.
 
-        December is mandatory.
+        Price and availability come from the snapshot month you choose. If that month is missing, the latest month in the ZIP is used.
         """)
 
     if uploaded_file is not None:
-        # Process the uploaded file
-        process_uploaded_file(uploaded_file, product_type)
+        monthly_data, load_errors = _load_zip(uploaded_file)
+        if load_errors:
+            for error in load_errors:
+                st.error(error)
+        elif monthly_data:
+            sample_columns = []
+            for frame in monthly_data.values():
+                sample_columns = [str(col) for col in frame.columns]
+                break
+            guessed = guess_column_mapping(sample_columns)
+            options = ["— not in file —"] + sample_columns
+
+            st.markdown("### Match your columns")
+            st.caption("Titles are required. Leave a field unset when your file does not have it.")
+            mapping = {}
+            for field in MAPPABLE_FIELDS:
+                default = guessed.get(field)
+                index = options.index(default) if default in options else 0
+                choice = st.selectbox(
+                    field,
+                    options,
+                    index=index,
+                    key=f"map_{field}_{_upload_token(uploaded_file)}",
+                )
+                if choice != "— not in file —":
+                    mapping[field] = choice
+
+            present_months = [m for m in get_month_order() if m in monthly_data]
+            snapshot_choice = st.selectbox(
+                "Snapshot month for price and availability",
+                ["Latest available"] + present_months,
+                index=(present_months.index("Dec") + 1) if "Dec" in present_months else 0,
+            )
+
+            mapped_frames = {
+                month: apply_column_mapping(frame, mapping)
+                for month, frame in monthly_data.items()
+            }
+            mapping_sig = "|".join(f"{k}={v}" for k, v in sorted(mapping.items()))
+            run_key = f"{_upload_token(uploaded_file)}|{product_type}|{snapshot_choice}|{mapping_sig}"
+
+            already_done = (
+                st.session_state.get("phase_1_complete", False)
+                and st.session_state.get("_uploaded_file_name") == run_key
+            )
+            if st.button("Consolidate catalog", type="primary") or already_done:
+                process_uploaded_file(mapped_frames, product_type, snapshot_choice, run_key)
 
     # Show session data if already processed
     elif st.session_state.get('phase_1_complete', False):

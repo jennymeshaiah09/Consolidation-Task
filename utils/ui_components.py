@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List, Tuple
 # Design tokens (mirrored in CSS)
 # ---------------------------------------------------------------------------
 BRAND_NAME = "Meridian"
-BRAND_TAGLINE = "Product data consolidation"
+BRAND_TAGLINE = "Search keyword generation"
 
 NAV_ITEMS: List[Tuple[str, str, str]] = [
     ("Home", "Home", "Home.py"),
@@ -377,6 +377,10 @@ h1, h2, h3, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
   background: var(--line-soft);
   color: var(--muted);
 }
+.m-badge-optional {
+  background: #E7F2F4;
+  color: #0E5964;
+}
 
 /* Progress tracker */
 .m-progress {
@@ -683,11 +687,11 @@ def render_hero_section(title: str = "", subtitle: str = ""):
         f"""
 <div class="m-hero">
   <div class="m-hero-inner">
-    <div class="m-hero-kicker">Catalog intelligence</div>
+    <div class="m-hero-kicker">Keyword generation</div>
     <h1 class="m-hero-title">Meri<em>dian</em></h1>
     <p class="m-hero-copy">
-      Consolidate monthly product data, classify into taxonomy, generate
-      MSV-ready keywords, and surface seasonal peaks — in one pipeline.
+      Turn product titles into short search phrases. Fast mode runs on
+      this machine. Quality mode uses Gemini when you add a key.
     </p>
   </div>
 </div>
@@ -718,6 +722,7 @@ def render_status_badge(status: str) -> str:
         "In Progress": "m-badge-in-progress",
         "Tenny's Work": "m-badge-tenny",
         "Coming Soon": "m-badge-coming-soon",
+        "Optional": "m-badge-optional",
     }
     status_class = status_classes.get(status, "m-badge-pending")
     return f'<span class="m-badge {status_class}">{status}</span>'
@@ -796,11 +801,67 @@ def render_info_banner(message: str, banner_type: str = "info"):
     )
 
 
+def render_model_picker(
+    key_prefix: str = "kw",
+    include_gemini_key: bool = False,
+    sidebar: bool = False,
+):
+    """Provider and model choice for keyword generation."""
+    from src.chat_models import MODEL_OPTIONS
+
+    host = st.sidebar if sidebar else st
+    provider = host.selectbox(
+        "Provider",
+        list(MODEL_OPTIONS),
+        key=f"{key_prefix}_provider",
+    )
+    model = host.selectbox(
+        "Model",
+        MODEL_OPTIONS[provider],
+        key=f"{key_prefix}_model_{provider}",
+    )
+    if provider == "OpenAI":
+        host.text_input(
+            "OpenAI API key",
+            type="password",
+            key="user_openai_api_key",
+            placeholder="sk-...",
+        )
+    elif provider == "Claude":
+        host.text_input(
+            "Claude API key",
+            type="password",
+            key="user_anthropic_api_key",
+            placeholder="sk-ant-...",
+        )
+    elif include_gemini_key:
+        host.text_input(
+            "Gemini API key",
+            type="password",
+            key="user_api_key",
+            placeholder="Optional — for Quality mode",
+        )
+    else:
+        host.caption("Gemini uses the API key in the sidebar.")
+    return provider, model
+
+
+def render_api_key_field():
+    """Per-visitor Gemini key. Stored only in this browser session."""
+    st.text_input(
+        "Gemini API key",
+        type="password",
+        key="user_api_key",
+        help="Optional. Fast keywords work without it. Paste a key from Google AI Studio to use Quality mode and category review. The key stays in this browser session.",
+        placeholder="Optional — for Quality mode",
+    )
+
+
 def render_sidebar_info(current_phase: Optional[Any] = None):
     """Sidebar helper copy — keeps dark theme readable."""
     with st.sidebar:
-        st.markdown("### Pipeline")
-        st.caption("Work phases in order. Session data persists across pages.")
+        st.markdown("### Keywords")
+        st.caption("Generate search phrases first. The catalog pipeline is optional.")
         if current_phase is not None:
             label = (
                 f"Phase {current_phase}"
@@ -809,25 +870,24 @@ def render_sidebar_info(current_phase: Optional[Any] = None):
             )
             st.markdown(f"**Current:** {label}")
         st.markdown("---")
-        st.markdown("**Flow**")
+        render_api_key_field()
+        st.markdown("---")
+        st.markdown("**Start here**")
+        if st.button("Generate keywords", key="sb_gen", use_container_width=True, type="primary"):
+            st.switch_page("pages/06_Keyword_Generator.py")
+        if st.button("Check a keyword", key="sb_ver", use_container_width=True):
+            st.switch_page("pages/07_Keyword_Verifier.py")
+        st.markdown("---")
+        st.markdown("**Catalog pipeline**")
         st.markdown(
             """
 1. Consolidate  
-2. Keywords  
-3. MSV  
+2. Keywords on the catalog  
+3. Search volume (optional)  
 4. Peaks  
-5. Insights  
+5. Export  
             """
         )
-        st.markdown("---")
-        st.caption("Tools")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Generator", key="sb_gen", use_container_width=True):
-                st.switch_page("pages/06_Keyword_Generator.py")
-        with c2:
-            if st.button("Verifier", key="sb_ver", use_container_width=True):
-                st.switch_page("pages/07_Keyword_Verifier.py")
 
 
 def render_custom_divider():

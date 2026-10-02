@@ -5,9 +5,40 @@ Handles the pandas merge pipeline for consolidating monthly data.
 
 import pandas as pd
 from typing import Dict, List, Optional
-from .normalization import create_product_key, add_product_key_column, add_category_column, add_category_level_columns
+from .normalization import create_product_key, add_category_level_columns
 from .validation import get_column_mapping, normalize_column_names
 from .ingestion import get_month_order
+
+
+def _series(df: pd.DataFrame, col_mapping: Dict[str, str], key: str, default_name: str) -> pd.Series:
+    """Return a mapped column, or an empty series when the file does not have it."""
+    col = col_mapping.get(key, default_name)
+    if col in df.columns:
+        return df[col]
+    return pd.Series([pd.NA] * len(df), index=df.index)
+
+
+def resolve_snapshot_month(
+    monthly_data: Dict[str, pd.DataFrame],
+    preferred: Optional[str] = None,
+) -> tuple[Optional[str], str]:
+    """Pick the month used for price and availability.
+
+    ``preferred`` is honored when that month was uploaded. Otherwise the latest
+    month in the ZIP is used and a warning is returned.
+    """
+    present = [month for month in get_month_order() if month in monthly_data]
+    if not present:
+        return None, "No recognised monthly files were found."
+    if preferred and preferred in monthly_data:
+        return preferred, ""
+    latest = present[-1]
+    if preferred:
+        return latest, (
+            f"{preferred} is not in this ZIP. "
+            f"Price and availability will come from {latest}."
+        )
+    return latest, ""
 
 
 def build_master_product_list(monthly_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -26,27 +57,33 @@ def build_master_product_list(monthly_data: Dict[str, pd.DataFrame]) -> pd.DataF
         df = normalize_column_names(df)
         col_mapping = get_column_mapping(df)
 
-        title_col = col_mapping.get("Product Title", "Product Title")
-        brand_col = col_mapping.get("Brand", "Brand")
+        titles = _series(df, col_mapping, "Product Title", "Product Title")
+        brands = _series(df, col_mapping, "Brand", "Brand")
+        categories = (
+            df["Source Category"]
+            if "Source Category" in df.columns
+            else pd.Series([pd.NA] * len(df), index=df.index)
+        )
 
         # Extract product info
-        for _, row in df.iterrows():
-            title = row.get(title_col, "")
-            brand = row.get(brand_col, "")
+        for idx in df.index:
+            title = titles.loc[idx]
+            brand = brands.loc[idx]
             product_key = create_product_key(title)
 
             if product_key:  # Skip empty keys
                 all_products.append({
                     'product_key': product_key,
                     'Product Title': title,
-                    'Product Brand': brand
+                    'Product Brand': "" if pd.isna(brand) else brand,
+                    'Source Category': "" if pd.isna(categories.loc[idx]) else categories.loc[idx],
                 })
 
     # Create DataFrame and remove duplicates (keep first occurrence)
     products_df = pd.DataFrame(all_products)
 
     if products_df.empty:
-        return pd.DataFrame(columns=['product_key', 'Product Title', 'Product Brand'])
+        return pd.DataFrame(columns=['product_key', 'Product Title', 'Product Brand', 'Source Category'])
 
     # Drop duplicates based on product_key, keeping first
     products_df = products_df.drop_duplicates(subset=['product_key'], keep='first')
@@ -72,13 +109,38 @@ def get_monthly_popularity(monthly_data: Dict[str, pd.DataFrame], month: str) ->
     df = normalize_column_names(df)
     col_mapping = get_column_mapping(df)
 
-    title_col = col_mapping.get("Product Title", "Product Title")
-    popularity_col = col_mapping.get("Popularity rank", "Popularity rank")
+    titles = _series(df, col_mapping, "Product Title", "Product Title")
+    popularity = _series(df, col_mapping, "Popularity rank", "Popularity rank")
 
     # Create product key and extract popularity
     result = pd.DataFrame({
-        'product_key': df[title_col].apply(create_product_key),
-        f'Product Popularity {month}': df[popularity_col]
+        'product_key': titles.apply(create_product_key),
+        f'Product Popularity {month}': popularity
+    })
+
+    # Remove duplicates
+    result = result.drop_duplicates(subset=['product_key'], keep='first')
+
+    return result
+
+
+def get_snapshot_data(monthly_data: Dict[str, pd.DataFrame], month: str) -> pd.DataFrame:
+    """Extract price and availability from the chosen snapshot month."""
+    if not month or month not in monthly_data:
+        return pd.DataFrame(columns=['product_key', 'Product Max Price', 'Availability'])
+
+    df = monthly_data[month].copy()
+    df = normalize_column_names(df)
+    col_mapping = get_column_mapping(df)
+
+    titles = _series(df, col_mapping, "Product Title", "Product Title")
+    prices = _series(df, col_mapping, "Price range max.", "Price range max.")
+    availability = _series(df, col_mapping, "Availability", "Availability")
+
+    result = pd.DataFrame({
+        'product_key': titles.apply(create_product_key),
+        'Product Max Price': prices,
+        'Availability': availability
     })
 
     # Remove duplicates
@@ -88,36 +150,8 @@ def get_monthly_popularity(monthly_data: Dict[str, pd.DataFrame], month: str) ->
 
 
 def get_december_data(monthly_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """
-    Extract December-specific data (Price and Availability).
-
-    Args:
-        monthly_data: Dictionary mapping month name to DataFrame
-
-    Returns:
-        DataFrame with product_key, price, and availability from December
-    """
-    if "Dec" not in monthly_data:
-        return pd.DataFrame(columns=['product_key', 'Product Max Price', 'Availability'])
-
-    df = monthly_data["Dec"].copy()
-    df = normalize_column_names(df)
-    col_mapping = get_column_mapping(df)
-
-    title_col = col_mapping.get("Product Title", "Product Title")
-    price_col = col_mapping.get("Price range max.", "Price range max.")
-    avail_col = col_mapping.get("Availability", "Availability")
-
-    result = pd.DataFrame({
-        'product_key': df[title_col].apply(create_product_key),
-        'Product Max Price': df[price_col],
-        'Availability': df[avail_col]
-    })
-
-    # Remove duplicates
-    result = result.drop_duplicates(subset=['product_key'], keep='first')
-
-    return result
+    """Backward-compatible wrapper. Prefer get_snapshot_data."""
+    return get_snapshot_data(monthly_data, "Dec")
 
 
 def calculate_peak_popularity(row: pd.Series, months: List[str]) -> str:
@@ -180,18 +214,24 @@ def calculate_peak_popularity(row: pd.Series, months: List[str]) -> str:
     return ", ".join(stable_months)
 
 
-def consolidate_data(monthly_data: Dict[str, pd.DataFrame], product_type: str) -> pd.DataFrame:
+def consolidate_data(
+    monthly_data: Dict[str, pd.DataFrame],
+    product_type: str,
+    snapshot_month: Optional[str] = None,
+) -> pd.DataFrame:
     """
     Main consolidation function that merges all monthly data.
 
     Args:
         monthly_data: Dictionary mapping month name to DataFrame
-        product_type: Product type (BWS, Pets, Electronics)
+        product_type: Product type, or "General catalog" to skip built-in taxonomy
+        snapshot_month: Month used for price and availability. Latest month if omitted.
 
     Returns:
         Consolidated DataFrame matching the output template
     """
     months = get_month_order()
+    snapshot_month, _warning = resolve_snapshot_month(monthly_data, snapshot_month)
 
     # Step 1: Build master product list
     master_df = build_master_product_list(monthly_data)
@@ -199,14 +239,26 @@ def consolidate_data(monthly_data: Dict[str, pd.DataFrame], product_type: str) -
     if master_df.empty:
         return pd.DataFrame()
 
-    # Step 2: Add L1, L2, L3 category columns based on product type
-    master_df = add_category_level_columns(master_df, product_type, 'Product Title')
+    # Step 2: Categories — visitor column, general catalog, or built-in taxonomy
+    source = master_df.get("Source Category", pd.Series(dtype=str)).astype(str).str.strip()
+    has_source_category = source.ne("").any() and source.str.lower().ne("nan").any()
+    if has_source_category:
+        label = "General" if product_type == "General catalog" else product_type
+        filled = source.where(source.ne("") & source.str.lower().ne("nan"), "Uncategorized")
+        master_df["Product Category L1"] = label
+        master_df["Product Category L2"] = filled
+        master_df["Product Category L3"] = filled
+    elif product_type == "General catalog":
+        master_df["Product Category L1"] = "General"
+        master_df["Product Category L2"] = "Uncategorized"
+        master_df["Product Category L3"] = "Uncategorized"
+    else:
+        master_df = add_category_level_columns(master_df, product_type, "Product Title")
 
-    # Step 3: Merge December data (Price and Availability)
-    dec_data = get_december_data(monthly_data)
-    master_df = master_df.merge(dec_data, on='product_key', how='left')
+    # Step 3: Merge snapshot-month price and availability
+    snapshot_data = get_snapshot_data(monthly_data, snapshot_month or "")
+    master_df = master_df.merge(snapshot_data, on='product_key', how='left')
 
-    # Apply business rules for December data
     # Price: If not available, set to "N/A"
     # Convert to string type to avoid mixed-type column issues
     master_df['Product Max Price'] = master_df['Product Max Price'].apply(
@@ -228,20 +280,11 @@ def consolidate_data(monthly_data: Dict[str, pd.DataFrame], product_type: str) -
         lambda row: calculate_peak_popularity(row, months), axis=1
     )
 
-    # Step 6: Add placeholder columns (to be filled later)
-    master_df['Product Keyword'] = ""  # Will be filled by LLM
-    master_df['Product Keyword Avg MSV'] = ""  # Left blank per requirements
-
-    # Add MSV date columns (Jan 2023 to Dec 2025) - all blank
-    years = [2023, 2024, 2025]
-    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    for year in years:
-        for month_num in range(1, 13):
-            col_name = f"{month_names[month_num-1]} {year}"
-            master_df[col_name] = ""
-
-    master_df['Peak Seasonality'] = ""  # Left blank per requirements
+    # Step 6: Keyword and search-volume columns are filled in later phases.
+    # Monthly MSV columns are added only when a visitor uploads them.
+    master_df['Product Keyword'] = ""
+    master_df['Product Keyword Avg MSV'] = ""
+    master_df['Peak Seasonality'] = ""
 
     # Step 7: Reorder columns to match output template
     output_columns = [
@@ -259,11 +302,6 @@ def consolidate_data(monthly_data: Dict[str, pd.DataFrame], product_type: str) -
     # Add monthly popularity columns
     for month in months:
         output_columns.append(f'Product Popularity {month}')
-
-    # Add MSV date columns
-    for year in years:
-        for month_num in range(1, 13):
-            output_columns.append(f"{month_names[month_num-1]} {year}")
 
     # Add peak columns
     output_columns.extend(['Peak Seasonality', 'Peak Popularity'])

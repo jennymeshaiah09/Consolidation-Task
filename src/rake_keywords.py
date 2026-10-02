@@ -409,7 +409,7 @@ def generate_keywords_rake(
     if progress_callback:
         progress_callback(1.0, total, total)
 
-    print(f"✓ Generated {total} keywords with RAKE (instant, MSV-optimized)")
+    print(f"Generated {total} keywords with RAKE (instant, MSV-optimized)")
 
     return df
 

@@ -30,10 +30,166 @@ def get_gemini_client(model_name: str = "gemini-2.5-flash-lite"):
     return genai.GenerativeModel(model_name)
 
 
+def _is_alcohol_vertical(product_type: str) -> bool:
+    return (product_type or "").strip().lower() in {"bws", "alcoholic beverages"}
+
+
+def _general_keyword_prompt(items_text: str) -> str:
+    """Search-keyword prompt that is not tied to one retail vertical."""
+    return f"""You are an ecommerce SEO keyword specialist.
+
+For each product, return the Google search a shopper types when they want this kind of product and do not know this exact title.
+
+Rules:
+- One keyword, 2–4 words, lowercase.
+- It must not be the title with only the case changed.
+- Use the words people search: "trail runner socks" becomes "trail running socks", "wireless desk lamp" becomes "cordless desk lamp".
+- Drop pack counts, materials used as decoration, retailer names, and promo words.
+- Keep a brand or model only when shoppers search that name.
+- No explanations.
+
+Good examples:
+- "Cedar Pour Over Kettle" -> "pour over kettle"
+- "Wireless Desk Lamp" -> "cordless desk lamp"
+- "Trail Runner Socks 3 Pack" -> "trail running socks"
+- "Samsung Galaxy S24 Ultra 256GB Unlocked" -> "samsung galaxy s24"
+- "Organic Cold Pressed Extra Virgin Olive Oil 500ml" -> "extra virgin olive oil"
+- "Stainless Steel Non Slip Dog Bowl Large" -> "non slip dog bowl"
+- "USB-C Fast Charging Cable 6ft 2 Pack" -> "usb c cable"
+- "Kids Waterproof Hooded Rain Jacket" -> "kids rain jacket"
+- "Memory Foam Pillow for Side Sleepers" -> "side sleeper pillow"
+- "Nike Air Zoom Pegasus Men's Running Shoes" -> "nike pegasus running shoes"
+- "Bluetooth Noise Cancelling Over Ear Headphones" -> "noise cancelling headphones"
+- "Cast Iron Dutch Oven 6 Quart" -> "dutch oven"
+
+INPUT
+{items_text}
+
+OUTPUT
+Return strictly a JSON object mapping each id to one keyword.
+Example: {{"0": "pour over kettle"}}
+"""
+
+
+def _parse_keyword_json(text: str) -> Dict[str, str]:
+    """Read an id-to-keyword JSON object from a model response."""
+    cleaned = text.strip()
+    if "```" in cleaned:
+        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+        if match:
+            cleaned = match.group(1).strip()
+        else:
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        parsed = {}
+        for key, value in re.findall(r'"(\d+)"\s*:\s*"([^"]*)"', cleaned):
+            parsed[key] = value.strip()
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): str(value).strip() for key, value in parsed.items() if value}
+
+
+def _parse_keyword_lists(text: str, limit: int = 5) -> Dict[str, List[str]]:
+    """Read an id-to-keyword-list JSON object from a model response."""
+    cleaned = text.strip()
+    if "```" in cleaned:
+        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+        if match:
+            cleaned = match.group(1).strip()
+        else:
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    lists: Dict[str, List[str]] = {}
+    for key, value in parsed.items():
+        raw_items = value if isinstance(value, list) else [value]
+        seen: set[str] = set()
+        keywords: List[str] = []
+        for item in raw_items:
+            phrase = str(item).strip().lower()
+            if not phrase or phrase in seen:
+                continue
+            seen.add(phrase)
+            keywords.append(phrase)
+            if len(keywords) >= limit:
+                break
+        if keywords:
+            lists[str(key)] = keywords
+    return lists
+
+
+def _options_prompt(items_text: str) -> str:
+    """Ask for five distinct search phrases per product."""
+    return f"""You are an ecommerce SEO keyword specialist.
+
+For each product, write 5 different Google searches a shopper might type when they want this kind of product and do not know the exact title.
+
+Rules:
+- Each keyword is 2–4 words, lowercase.
+- The 5 phrases for one product must differ from each other.
+- Do not return the title with only the case changed.
+- Drop pack counts, decorative materials, retailer names, and promo words.
+- Keep a brand or model only when shoppers search that name.
+- No explanations.
+
+Good set for "Trail Runner Socks 3 Pack":
+["trail running socks", "running socks", "trail socks", "athletic running socks", "runner socks"]
+
+INPUT
+{items_text}
+
+OUTPUT
+Return strictly a JSON object mapping each id to an array of 5 keywords.
+Example: {{"0": ["pour over kettle", "gooseneck kettle", "coffee kettle", "pour over coffee kettle", "drip kettle"]}}
+"""
+
+
+def generate_keyword_options(
+    titles: List[str],
+    brands: List[str] | None = None,
+    provider: str = "Gemini",
+    model_name: str = "gemini-2.5-flash-lite",
+) -> List[List[str]]:
+    """Ask the selected chat model for five search phrases per title."""
+    from .chat_models import complete_text
+
+    brands = brands or [""] * len(titles)
+
+    def sanitize(text: str) -> str:
+        text = str(text).replace('"', "'").replace("\n", " ").replace("\r", " ")
+        return text.replace("\\", " ").strip()[:100]
+
+    items_text = ""
+    for index, title in enumerate(titles):
+        brand = sanitize(brands[index] if index < len(brands) else "")
+        brand_part = f" | Brand: {brand}" if brand and brand.lower() not in {"", "nan", "none"} else ""
+        items_text += f'{{"product": "{sanitize(title)}{brand_part}", "id": "{index}"}}\n'
+
+    text = complete_text(provider, model_name, _options_prompt(items_text))
+    parsed = _parse_keyword_lists(text)
+    options: List[List[str]] = []
+    for index in range(len(titles)):
+        phrases = parsed.get(str(index), [])
+        if not phrases:
+            raise ValueError(f"The model did not return keywords for “{titles[index]}”.")
+        options.append(phrases)
+    return options
+
+
 def generate_batch_keywords_api(
     model,
     batch_data: List[Dict],
-    batch_id: int
+    batch_id: int,
+    product_type: str = "",
+    provider: str = "Gemini",
+    model_name: str = "gemini-2.5-flash-lite",
 ) -> Dict[str, str]:
     """
     Generate keywords for a batch of products in one API call.
@@ -54,7 +210,10 @@ def generate_batch_keywords_api(
         brand_part = f" | Brand: {brand}" if brand and brand.lower() not in ('', 'nan', 'none') else ""
         items_text += f'{{"product": "{title}{brand_part}", "id": "{item["id"]}"}}\n'
 
-    prompt = f"""You are an ecommerce SEO keyword extraction specialist for alcohol retail products.
+    if not _is_alcohol_vertical(product_type):
+        prompt = _general_keyword_prompt(items_text)
+    else:
+        prompt = f"""You are an ecommerce SEO keyword extraction specialist for alcohol retail products.
 
 Your job is to generate realistic Google search queries customers would use to find the exact product.
 
@@ -190,6 +349,17 @@ Note: Return a single best keyword per ID (choose the best from the 3 variations
 Return strictly a JSON object mapping ID to the single best search keyword.
 """
 
+    if provider in {"OpenAI", "Claude"}:
+        from .chat_models import complete_text
+        try:
+            text = complete_text(provider, model_name, prompt).strip()
+        except Exception as exc:
+            if "429" in str(exc) or "quota" in str(exc).lower():
+                raise QuotaExceededError("API Quota Exceeded")
+            print(f"  [BATCH {batch_id}] Error: {str(exc)[:180]}")
+            raise
+        return _parse_keyword_json(text)
+
     try:
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -213,25 +383,7 @@ Return strictly a JSON object mapping ID to the single best search keyword.
             return {}
 
         text = response.text.strip()
-        
-        # Clean markdown
-        if '```' in text:
-            match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
-            if match:
-                text = match.group(1).strip()
-            else:
-                text = text.replace('```json', '').replace('```', '').strip()
-        
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Fallback regex
-            result = {}
-            pattern = r'"(\d+)"\s*:\s*"([^"]*)"'
-            matches = re.findall(pattern, text)
-            for k, v in matches:
-                result[k] = v.strip()
-            return result
+        return _parse_keyword_json(text)
 
     except Exception as e:
         if "429" in str(e) or "quota" in str(e).lower():
@@ -430,15 +582,23 @@ def generate_keywords_batch(
     delay_between_batches: float = 0.5,
     model_name: str = "gemini-2.5-flash-lite",
     max_products: int = None,
-    max_workers: int = 5
+    max_workers: int = 5,
+    provider: str = "Gemini",
 ) -> pd.DataFrame:
     """
     Generate keywords using Parallel Batch Processing (The Winner).
     Chunks data -> Sends batches in parallel -> Merges results.
     """
-    model = get_gemini_client(model_name)
-    if model is None:
-        raise ValueError("GOOGLE_API_KEY not set")
+    provider = provider or "Gemini"
+    if provider == "Gemini":
+        model = get_gemini_client(model_name)
+        if model is None:
+            raise ValueError("Add a Gemini API key in the sidebar.")
+    else:
+        from .chat_models import provider_api_key
+        model = None
+        if not provider_api_key(provider):
+            raise ValueError(f"Add a {provider} API key.")
 
     df = df.copy()
     if 'Product Keyword' not in df.columns:
@@ -482,7 +642,14 @@ def generate_keywords_batch(
                 # Add delay based on worker usage to avoid initial spike
                 time.sleep(delay_between_batches * attempt)
                 
-                batch_result = generate_batch_keywords_api(model, batch_payload, batch_idx)
+                batch_result = generate_batch_keywords_api(
+                    model,
+                    batch_payload,
+                    batch_idx,
+                    product_type,
+                    provider,
+                    model_name,
+                )
                 if batch_result:
                     return batch_result
             except QuotaExceededError:
@@ -559,7 +726,7 @@ def classify_other_products_batch(
     """
     model = get_gemini_client(model_name)
     if model is None:
-        raise Exception("GOOGLE_API_KEY not set. Please check your .env file.")
+        raise Exception("Add a Gemini API key in the sidebar to use Quality mode.")
 
     df = df.copy()
 

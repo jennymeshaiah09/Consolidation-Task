@@ -5,6 +5,9 @@ Handles state persistence across pages
 
 import os
 import json
+import re
+import shutil
+import uuid
 
 import streamlit as st
 import pandas as pd
@@ -12,51 +15,99 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 # ---------------------------------------------------------------------------
-# File-based cache — survives page refreshes / browser reloads
+# Per-visitor cache. The run id lives in the page URL so a refresh restores
+# only that visitor's files, not another session's catalog.
 # ---------------------------------------------------------------------------
-_CACHE_DIR  = os.path.join(os.path.dirname(__file__), '..')
-_CACHE_CSV  = os.path.join(_CACHE_DIR, 'pipeline_cache.csv')
-_CACHE_META = os.path.join(_CACHE_DIR, 'pipeline_cache_meta.json')
+_CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'temp', 'runs')
+_RUN_ID_RE = re.compile(r'^[a-f0-9]{32}$')
 
 _META_KEYS = (
     'product_type',
-    'phase_1_complete', 'phase_2_complete',
+    'phase_1_complete', 'phase_2_complete', 'phase_3_complete',
     'total_products', 'categories_count', 'keywords_generated',
+    'snapshot_month',
 )
+
+MAX_ZIP_BYTES = 50 * 1024 * 1024
+
+
+def _valid_run_id(value: str) -> bool:
+    return bool(value) and bool(_RUN_ID_RE.match(value))
+
+
+def _run_dir(run_id: str) -> str:
+    return os.path.join(_CACHE_DIR, run_id)
+
+
+def _cache_paths(run_id: str) -> tuple[str, str]:
+    folder = _run_dir(run_id)
+    return os.path.join(folder, 'pipeline.csv'), os.path.join(folder, 'meta.json')
+
+
+def _ensure_run_id() -> str:
+    """Bind this browser session to its own cache folder."""
+    current = st.session_state.get('run_id')
+    if _valid_run_id(str(current or '')):
+        run_id = str(current)
+    else:
+        requested = ''
+        try:
+            requested = st.query_params.get('run', '') or ''
+        except Exception:
+            requested = ''
+        if isinstance(requested, list):
+            requested = requested[0] if requested else ''
+        if _valid_run_id(str(requested)) and os.path.isdir(_run_dir(str(requested))):
+            run_id = str(requested)
+        else:
+            run_id = uuid.uuid4().hex
+        st.session_state['run_id'] = run_id
+    try:
+        if st.query_params.get('run') != run_id:
+            st.query_params['run'] = run_id
+    except Exception:
+        pass
+    return run_id
 
 
 def _persist():
-    """Write consolidated_df + key metadata to disk."""
+    """Write consolidated_df + key metadata to this visitor's folder."""
     df = st.session_state.get('consolidated_df')
     if df is None:
         return
     try:
+        run_id = _ensure_run_id()
+        folder = _run_dir(run_id)
+        os.makedirs(folder, exist_ok=True)
+        csv_path, meta_path = _cache_paths(run_id)
         df = df.loc[:, ~df.columns.duplicated(keep='first')]
-        df.to_csv(_CACHE_CSV, index=False)
+        df.to_csv(csv_path, index=False)
         meta = {k: st.session_state.get(k) for k in _META_KEYS}
-        with open(_CACHE_META, 'w') as f:
+        with open(meta_path, 'w') as f:
             json.dump(meta, f)
     except Exception:
         pass
 
 
 def _restore():
-    """Silently reload session from disk when session is empty."""
+    """Reload this visitor's run when the URL still points at it."""
     if st.session_state.get('phase_1_complete'):
-        return  # session already populated
-    if not (os.path.exists(_CACHE_CSV) and os.path.exists(_CACHE_META)):
+        return
+    run_id = _ensure_run_id()
+    csv_path, meta_path = _cache_paths(run_id)
+    if not (os.path.exists(csv_path) and os.path.exists(meta_path)):
         return
     try:
-        df = pd.read_csv(_CACHE_CSV)
+        df = pd.read_csv(csv_path)
         df = df.loc[:, ~df.columns.duplicated(keep='first')]
-        with open(_CACHE_META, 'r') as f:
+        with open(meta_path, 'r') as f:
             meta = json.load(f)
         st.session_state['consolidated_df'] = df
         for key in _META_KEYS:
             if key in meta:
                 st.session_state[key] = meta[key]
     except Exception:
-        pass  # corrupted cache — ignore, user can re-run Phase 1
+        pass  # corrupted cache — ignore, visitor can re-run Phase 1
 
 
 # Public alias so Phase 3 (or any page) can trigger a save after
@@ -146,7 +197,7 @@ def check_phase_prerequisites(phase_num: int) -> tuple[bool, str]:
         return True, ""
 
     if phase_num == 3:
-        # Phase 3 is Tenny's work - always accessible but informational only
+        # Search volume is optional and does not block later phases.
         return True, ""
 
     if phase_num == 4:
@@ -178,12 +229,8 @@ def get_phase_status(phase_num: int) -> str:
         5: st.session_state.phase_5_complete,
     }
 
-    # Special cases for certain phases
-    if phase_num == 3:
-        return "Tenny's Work"
-
-    if phase_num == 5:
-        return "Coming Soon"
+    if phase_num == 3 and not status_map.get(3, False):
+        return "Optional"
 
     # Check completion
     if status_map.get(phase_num, False):
@@ -220,16 +267,20 @@ def get_session_stats() -> Optional[Dict[str, Any]]:
 
 
 def clear_session_data():
-    """Clear all session data and on-disk cache (useful for starting fresh)"""
+    """Clear this visitor's session and their cache folder."""
+    run_id = st.session_state.get('run_id')
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    # Remove persisted cache so _restore() won't bring it back
-    for path in (_CACHE_CSV, _CACHE_META):
+    if _valid_run_id(str(run_id or '')):
         try:
-            if os.path.exists(path):
-                os.remove(path)
+            shutil.rmtree(_run_dir(str(run_id)), ignore_errors=True)
         except Exception:
             pass
+    try:
+        if 'run' in st.query_params:
+            del st.query_params['run']
+    except Exception:
+        pass
     init_session_state()
 
 

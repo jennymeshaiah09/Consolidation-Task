@@ -91,22 +91,35 @@ def calculate_yearly_peak(row, year):
     return ", ".join(peak_months)
 
 
+def _seasonality_years(columns) -> list:
+    """Years present as 'Mon YYYY' search-volume columns."""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    years = set()
+    for col in columns:
+        parts = str(col).split()
+        if len(parts) == 2 and parts[0] in months and parts[1].isdigit() and len(parts[1]) == 4:
+            years.add(int(parts[1]))
+    return sorted(years)
+
+
 def calculate_intersection_peak(row):
     """
-    Calculate True Peak Seasonality by finding the intersection of
-    peaks across 2023, 2024, and 2025.
-    
-    Returns:
-        Comma-separated list of months that appear in ALL 3 years.
-        If no intersection, returns empty string.
+    Peak months that appear in every year present on the row.
+
+    A single year returns that year's peaks. Several years return the overlap.
     """
-    months_2023 = set([m.strip() for m in str(row.get('Peak Seasonality 2023', '')).split(',') if m.strip()])
-    months_2024 = set([m.strip() for m in str(row.get('Peak Seasonality 2024', '')).split(',') if m.strip()])
-    months_2025 = set([m.strip() for m in str(row.get('Peak Seasonality 2025', '')).split(',') if m.strip()])
-    
-    # Find intersection of all 3 years
-    common_months = months_2023.intersection(months_2024).intersection(months_2025)
-    
+    year_sets = []
+    for col in row.index:
+        name = str(col)
+        if name.startswith("Peak Seasonality ") and name.rsplit(" ", 1)[-1].isdigit():
+            months = [m.strip() for m in str(row.get(col, "")).split(",") if m.strip() and m.strip().lower() != "nan"]
+            if months:
+                year_sets.append(set(months))
+
+    if not year_sets:
+        return ""
+
+    common_months = set.intersection(*year_sets) if len(year_sets) > 1 else year_sets[0]
     if not common_months:
         return ""
     
@@ -133,7 +146,9 @@ def calculate_true_peak(row):
     Returns: comma-separated list of 1-3 peak months
     """
     month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    years = [2023, 2024, 2025]
+    years = _seasonality_years(row.index)
+    if len(years) < 2:
+        years = years or [0]
     
     # Get MSV values for all months/years (treat blank as 0)
     msv_data = {}  # {month: {year: value}}
@@ -292,24 +307,16 @@ def merge_msv_data(consolidated_df, msv_df):
             suffixes=('', '_msv')
         )
 
-    # Calculate (or Recalculate) Peak Seasonality if missing or empty
-    # Calculate (or Recalculate) Peak Seasonality
-    st.info("Calculating Yearly Peak Seasonality (2023, 2024, 2025)...")
-    
-    # Ensure we have data columns
-    has_2023 = any('2023' in str(c) for c in merged_df.columns)
-    has_2024 = any('2024' in str(c) for c in merged_df.columns)
-    has_2025 = any('2025' in str(c) for c in merged_df.columns)
+    years_found = _seasonality_years(merged_df.columns)
+    if years_found:
+        st.info(f"Calculating peak seasonality for {', '.join(str(year) for year in years_found)}...")
+        for year in years_found:
+            merged_df[f'Peak Seasonality {year}'] = merged_df.apply(
+                lambda row, year=year: calculate_yearly_peak(row, year), axis=1
+            )
+    else:
+        st.info("No monthly search-volume columns found. Average MSV will still be kept.")
 
-    if has_2023:
-        merged_df['Peak Seasonality 2023'] = merged_df.apply(lambda row: calculate_yearly_peak(row, 2023), axis=1)
-    if has_2024:
-        merged_df['Peak Seasonality 2024'] = merged_df.apply(lambda row: calculate_yearly_peak(row, 2024), axis=1)
-    if has_2025:
-        merged_df['Peak Seasonality 2025'] = merged_df.apply(lambda row: calculate_yearly_peak(row, 2025), axis=1)
-
-    # Calculate True Peak (Intersection)
-    st.info("Calculating True Peak Seasonality (Intersection of all 3 years)...")
     merged_df['Peak Seasonality'] = merged_df.apply(calculate_intersection_peak, axis=1)
     
     # Also keep the old "True Peak" score logic as "True Peak Score" just in case, or remove it if obsolete.
@@ -500,152 +507,102 @@ def main():
 
     render_custom_divider()
 
-    # Two options: Manual upload or API
-    st.markdown("### MSV integration")
+    st.markdown("### Search volume")
+    st.caption("Optional. Skip this phase if you only need keywords, ranks, and the Excel export.")
 
-    tab1, tab2 = st.tabs(["📁 Manual Upload", "🤖 Automated API (Coming Soon)"])
+    st.markdown("#### Upload a search-volume file")
 
-    with tab1:
-        st.markdown("#### Upload MSV Data File")
+    st.info("""
+    **File requirements**
+    - Excel (.xlsx) or CSV (.csv)
+    - A join key: `Product Title` or `Product Keyword` (Google Ads `Keyword` is renamed automatically)
+    - Monthly columns for whatever years you have, such as `Jan 2024` or `Jan-24`
+    - `Product Keyword Avg MSV` or Google Ads `Monthly Search Estimated`
+    """)
 
-        st.info("""
-        **File Requirements:**
-        - Format: Excel (.xlsx) or CSV (.csv)
-        - Must contain a join key: `Product Key`, `Product Title`, or `Product Keyword`
-        - **Google Ads Keyword Planner exports are supported directly** — `Keyword` and
-          `Monthly Search Estimated` are auto-renamed, and `Jan-23` date columns are
-          converted to `Jan 2023`. The merge uses a case-insensitive keyword match.
-        - Recommended columns:
-          - `Product Keyword Avg MSV` - Average monthly search volume
-          - Monthly columns: `Jan 2023`, `Feb 2023`, ..., `Dec 2025` (36 months)
-            OR short format: `Jan-23`, `Feb-23`, etc. (auto-converted)
-            OR datetime format: `2023-01-01`, `2023-02-01`, etc. (auto-converted)
-          - `Peak Seasonality` (optional, will be calculated if not provided)
-        """)
+    uploaded_file = st.file_uploader(
+        "Upload MSV data file",
+        type=['xlsx', 'csv'],
+        help="Upload Excel or CSV file containing MSV data"
+    )
 
-        uploaded_file = st.file_uploader(
-            "Upload MSV data file",
-            type=['xlsx', 'csv'],
-            help="Upload Excel or CSV file containing MSV data"
-        )
+    if uploaded_file:
+        try:
+            # Read file
+            if uploaded_file.name.endswith('.csv'):
+                msv_df = pd.read_csv(uploaded_file)
+            else:
+                msv_df = pd.read_excel(uploaded_file)
 
-        if uploaded_file:
-            try:
-                # Read file
-                if uploaded_file.name.endswith('.csv'):
-                    msv_df = pd.read_csv(uploaded_file)
-                else:
-                    msv_df = pd.read_excel(uploaded_file)
+            st.success(f"✅ File loaded: {len(msv_df)} products found")
 
-                st.success(f"✅ File loaded: {len(msv_df)} products found")
+            # Detect and rename Google Ads Keyword Planner columns
+            msv_df = normalize_google_ads_columns(msv_df)
 
-                # Detect and rename Google Ads Keyword Planner columns
-                msv_df = normalize_google_ads_columns(msv_df)
+            # Normalize date columns (Mon-YY / datetime → "Jan 2023" format)
+            msv_df = normalize_date_columns(msv_df)
 
-                # Normalize date columns (Mon-YY / datetime → "Jan 2023" format)
-                msv_df = normalize_date_columns(msv_df)
+            # Validate file structure
+            is_valid, error_message, warnings = validate_msv_file(msv_df)
 
-                # Validate file structure
-                is_valid, error_message, warnings = validate_msv_file(msv_df)
+            if not is_valid:
+                st.error(f"❌ File validation failed: {error_message}")
+                return
 
-                if not is_valid:
-                    st.error(f"❌ File validation failed: {error_message}")
-                    return
+            if warnings:
+                with st.expander("⚠️ Validation Warnings", expanded=True):
+                    for warning in warnings:
+                        st.warning(warning)
 
-                if warnings:
-                    with st.expander("⚠️ Validation Warnings", expanded=True):
-                        for warning in warnings:
-                            st.warning(warning)
+            # Show preview
+            with st.expander("📋 MSV Data Preview", expanded=True):
+                st.dataframe(msv_df.head(10), use_container_width=True)
 
-                # Show preview
-                with st.expander("📋 MSV Data Preview", expanded=True):
-                    st.dataframe(msv_df.head(10), use_container_width=True)
+            # Merge button
+            st.markdown("---")
 
-                # Merge button
-                st.markdown("---")
+            col1, col2 = st.columns(2)
 
-                col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔗 Merge MSV Data with Consolidated Data", type="primary", use_container_width=True):
+                    with st.spinner("Merging MSV data..."):
+                        try:
+                            # Merge data
+                            merged_df = merge_msv_data(consolidated_df, msv_df)
 
-                with col1:
-                    if st.button("🔗 Merge MSV Data with Consolidated Data", type="primary", use_container_width=True):
-                        with st.spinner("Merging MSV data..."):
-                            try:
-                                # Merge data
-                                merged_df = merge_msv_data(consolidated_df, msv_df)
+                            # Update session state and persist to disk
+                            st.session_state.consolidated_df = merged_df
+                            st.session_state.phase_3_complete = True
+                            save_pipeline_state()
 
-                                # Update session state and persist to disk
-                                st.session_state.consolidated_df = merged_df
-                                save_pipeline_state()
+                            st.success(f"✅ MSV data merged successfully!")
+                            st.success(f"✅ Peak Seasonality calculated for all products")
 
-                                st.success(f"✅ MSV data merged successfully!")
-                                st.success(f"✅ Peak Seasonality calculated for all products")
+                            # Show updated metrics
+                            with_msv = merged_df['Product Keyword Avg MSV'].notna().sum() if 'Product Keyword Avg MSV' in merged_df.columns else 0
+                            coverage = (with_msv / len(merged_df)) * 100 if len(merged_df) > 0 else 0
 
-                                # Show updated metrics
-                                with_msv = merged_df['Product Keyword Avg MSV'].notna().sum() if 'Product Keyword Avg MSV' in merged_df.columns else 0
-                                coverage = (with_msv / len(merged_df)) * 100 if len(merged_df) > 0 else 0
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                st.metric("Products with MSV", with_msv)
+                            with col_b:
+                                st.metric("Coverage", f"{coverage:.1f}%")
 
-                                col_a, col_b = st.columns(2)
-                                with col_a:
-                                    st.metric("Products with MSV", with_msv)
-                                with col_b:
-                                    st.metric("Coverage", f"{coverage:.1f}%")
+                            st.info("You can now proceed to Phase 4 (Peak Analysis) to analyze Peak Popularity and Peak Seasonality!")
 
-                                st.info("You can now proceed to Phase 4 (Peak Analysis) to analyze Peak Popularity and Peak Seasonality!")
+                            st.balloons()
 
-                                st.balloons()
+                        except Exception as e:
+                            st.error(f"❌ Error merging data: {e}")
+                            st.exception(e)
 
-                            except Exception as e:
-                                st.error(f"❌ Error merging data: {e}")
-                                st.exception(e)
+            with col2:
+                if st.button("🔄 Clear and Re-upload", type="secondary", use_container_width=True):
+                    st.rerun()
 
-                with col2:
-                    if st.button("🔄 Clear and Re-upload", type="secondary", use_container_width=True):
-                        st.rerun()
-
-            except Exception as e:
-                st.error(f"❌ Error reading file: {e}")
-                st.info("Please ensure the file is a valid Excel (.xlsx) or CSV (.csv) file")
-
-    with tab2:
-        st.markdown("#### Automated MSV Lookup via Google Ads API")
-
-        st.info("""
-        **Status:** Awaiting Google Ads API Approval
-
-        The automated MSV lookup requires:
-        - ✅ Google Ads API credentials configured
-        - ✅ OAuth refresh token generated
-        - ⏳ Standard Access approval (currently Explorer access only)
-
-        **Current Limitation:** Explorer access only works with test accounts.
-        For production MSV data, Standard Access is required.
-        """)
-
-        render_info_banner(
-            "💡 While waiting for API approval, use the **Manual Upload** tab to upload MSV data provided by Tenny.",
-            "info"
-        )
-
-        if st.button("📖 View API Setup Documentation"):
-            st.markdown("""
-            ### Google Ads API Setup Steps
-
-            1. **Apply for Standard Access**
-               - Go to Google Ads API Centre
-               - Click "Request Standard Access"
-               - Provide use case description
-
-            2. **Wait for Approval** (24-72 hours)
-
-            3. **Test API Connection**
-               - Run `python test_google_ads_api.py`
-               - Run `python test_keyword_planner.py`
-
-            4. **Enable Automated MSV**
-               - Once approved, the automated option will be enabled
-
-            For detailed instructions, see `GOOGLE_ADS_API_SETUP.md`
-            """)
+        except Exception as e:
+            st.error(f"❌ Error reading file: {e}")
+            st.info("Please ensure the file is a valid Excel (.xlsx) or CSV (.csv) file")
 
     render_custom_divider()
 
@@ -672,7 +629,7 @@ def main():
         MSV data adds these columns to your dataset:
 
         - **Product Keyword Avg MSV** - Average search volume
-        - **Jan 2023** through **Dec 2025** - Monthly values (36 columns)
+        - Monthly columns for the years in your file
         - **Peak Seasonality** - Months with highest search volume
 
         These enable Peak Seasonality analysis in Phase 4.
@@ -694,14 +651,8 @@ def main():
             st.switch_page("Home.py")
 
     with col3:
-        # Check if MSV data exists
-        has_msv = 'Product Keyword Avg MSV' in consolidated_df.columns if consolidated_df is not None else False
-
-        if has_msv:
-            if st.button("Phase 4: Peak Analysis →", type="primary", use_container_width=True):
-                st.switch_page("pages/04_Peaks.py")
-        else:
-            st.button("Phase 4: Peak Analysis →", use_container_width=True, disabled=True, help="Upload MSV data first")
+        if st.button("Phase 4: Peaks →", type="primary", use_container_width=True):
+            st.switch_page("pages/04_Peaks.py")
 
 
 if __name__ == "__main__":

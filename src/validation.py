@@ -71,30 +71,81 @@ def validate_required_columns(df: pd.DataFrame, filename: str) -> List[str]:
     return errors
 
 
+# Public catalog fields. Only the title blocks consolidation.
+# Office exports still match through FIELD_ALIASES.
+FIELD_ALIASES = {
+    "Product Title": [
+        "product title", "title", "name", "product name", "item name", "item",
+    ],
+    "Brand": ["brand", "product brand", "manufacturer", "maker"],
+    "Availability": ["availability", "stock", "stock status", "in stock"],
+    "Price range max.": [
+        "price range max.", "price range max", "price", "max price",
+        "product max price", "price max",
+    ],
+    "Popularity rank": ["popularity rank", "popularity", "rank", "sales rank"],
+    "Source Category": [
+        "category", "product category", "product category l3", "subcategory",
+        "source category",
+    ],
+}
+
+MAPPABLE_FIELDS = list(FIELD_ALIASES.keys())
+
+
+def guess_column_mapping(columns: List[str]) -> Dict[str, str]:
+    """Match file columns to canonical fields. Unmatched fields are omitted."""
+    lookup = {}
+    for col in columns:
+        if isinstance(col, str):
+            lookup.setdefault(col.strip().lower(), col)
+
+    mapping = {}
+    used = set()
+    for field, aliases in FIELD_ALIASES.items():
+        for alias in aliases:
+            actual = lookup.get(alias)
+            if actual and actual not in used:
+                mapping[field] = actual
+                used.add(actual)
+                break
+    return mapping
+
+
+def apply_column_mapping(df: pd.DataFrame, mapping: Dict[str, str]) -> pd.DataFrame:
+    """Rename mapped source columns to canonical field names."""
+    df = normalize_column_names(df.copy())
+    rename = {}
+    for canonical, actual in mapping.items():
+        if not actual or actual == "— not in file —":
+            continue
+        if actual in df.columns and actual != canonical:
+            rename[actual] = canonical
+    return df.rename(columns=rename)
+
+
 def validate_all_files(monthly_data: Dict[str, pd.DataFrame]) -> Tuple[bool, List[str]]:
     """
-    Validate all monthly data files.
+    Validate monthly files after column mapping.
 
-    Args:
-        monthly_data: Dictionary mapping month name to DataFrame
-
-    Returns:
-        Tuple of (is_valid, list of error messages)
+    A product title is required. Other catalog fields are optional.
+    A missing snapshot month is reported by the caller, not rejected here.
     """
     errors = []
 
-    # Check that December file exists (mandatory)
-    if "Dec" not in monthly_data:
-        errors.append("December 2025 file (Dec-2025.xlsx or Dec-2025.csv) is required but missing")
+    if not monthly_data:
+        errors.append("No monthly files were found in the ZIP.")
+        return False, errors
 
-    # Validate columns for each file
     for month, df in monthly_data.items():
-        filename = f"{month}-2025"
-        column_errors = validate_required_columns(df, filename)
-        errors.extend(column_errors)
+        columns = {
+            col.strip().lower() if isinstance(col, str) else str(col).lower()
+            for col in df.columns
+        }
+        if "product title" not in columns and "title" not in columns:
+            errors.append(f"{month} is missing a product title column.")
 
-    is_valid = len(errors) == 0
-    return is_valid, errors
+    return len(errors) == 0, errors
 
 
 def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:

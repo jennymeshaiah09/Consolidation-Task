@@ -1,6 +1,5 @@
 """
-Meridian — Product Data Consolidation Pipeline
-Homepage
+Meridian — search keyword generation, with an optional catalog pipeline.
 """
 
 import streamlit as st
@@ -13,7 +12,9 @@ from utils.ui_components import (
     render_info_banner,
     render_header_navigation,
     render_section_heading,
+    render_api_key_field,
 )
+from utils.sample_data import build_sample_catalog_zip
 from utils.state_manager import (
     init_session_state,
     get_session_stats,
@@ -54,11 +55,29 @@ def render_quick_stats():
     render_custom_divider()
 
 
-def render_phase_overview():
-    """Pipeline phase cards."""
+def render_primary_task():
+    """Keyword generation is the main job of the app."""
     render_section_heading(
-        "Pipeline",
-        "Move through each phase in order. Data carries forward automatically.",
+        "Generate keywords",
+        "Upload a list of product titles, or type them in. You get a short search phrase for each one.",
+    )
+    render_info_banner(
+        "Fast mode needs no API key. Paste a Gemini key in the sidebar when you want Quality mode."
+    )
+    primary, secondary = st.columns(2)
+    with primary:
+        if st.button("Generate keywords", key="home_tool_gen", type="primary", use_container_width=True):
+            st.switch_page("pages/06_Keyword_Generator.py")
+    with secondary:
+        if st.button("Check a keyword", key="home_tool_ver", use_container_width=True):
+            st.switch_page("pages/07_Keyword_Verifier.py")
+
+
+def render_phase_overview():
+    """Optional catalog pipeline."""
+    render_section_heading(
+        "Catalog pipeline",
+        "Optional. Use this when you have monthly files and also want categories, search volume, and peaks.",
     )
 
     col1, col2 = st.columns(2)
@@ -84,7 +103,7 @@ def render_phase_overview():
         render_phase_card(
             phase_num=3,
             title="MSV management",
-            description="Join Monthly Search Volume exports and derive seasonal peaks.",
+            description="Optional. Upload a search-volume export for any months you have.",
             status=get_phase_status(3),
             page_link="03_MSV",
         )
@@ -106,42 +125,14 @@ def render_phase_overview():
             status=get_phase_status(5),
             page_link="05_Insights",
         )
-    with col6:
-        st.markdown(
-            """
-<div class="m-phase">
-  <div class="m-phase-num">Tools</div>
-  <h3>Standalone utilities</h3>
-  <p>Run keyword generation or verification without walking the full pipeline.</p>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
-        t1, t2 = st.columns(2)
-        with t1:
-            if st.button("Keyword generator", key="home_tool_gen", use_container_width=True):
-                st.switch_page("pages/06_Keyword_Generator.py")
-        with t2:
-            if st.button("Keyword verifier", key="home_tool_ver", use_container_width=True):
-                st.switch_page("pages/07_Keyword_Verifier.py")
-
-
 def render_getting_started():
-    """First-run guidance."""
-    if get_session_stats():
-        return
-
-    render_section_heading("Start here", "One ZIP of monthly catalogs gets you into the pipeline.")
-    render_info_banner(
-        "Begin in Phase 01 with a ZIP of monthly CSV/Excel files. December is required. "
-        "Then generate keywords, attach MSV, and review peaks."
-    )
-    st.markdown(
-        """
-- **Inputs:** Product Title, Brand, Availability, Price range max, Popularity rank  
-- **Taxonomy:** Categories & subs Excel (14 product types, ~866 categories)  
-- **Keywords:** Hybrid / RAKE / Gemini — optimized for non-zero MSV  
-        """
+    """Sample catalog for the optional pipeline."""
+    render_section_heading("Sample catalog", "A small ZIP if you want to try the monthly pipeline.")
+    st.download_button(
+        "Download a sample catalog",
+        data=build_sample_catalog_zip(),
+        file_name="meridian-sample-catalog.zip",
+        mime="application/zip",
     )
 
 
@@ -151,22 +142,30 @@ def main():
 
     with st.sidebar:
         st.markdown("### Meridian")
-        st.caption("Product data consolidation pipeline")
+        st.caption("Search keyword generation")
+        st.markdown("---")
+        render_api_key_field()
+        st.markdown("---")
+        if st.button("Generate keywords", key="home_side_gen", type="primary", use_container_width=True):
+            st.switch_page("pages/06_Keyword_Generator.py")
+        if st.button("Check a keyword", key="home_side_ver", use_container_width=True):
+            st.switch_page("pages/07_Keyword_Verifier.py")
         st.markdown("---")
         if st.button("Start fresh session", help="Clear all pipeline data", use_container_width=True):
             clear_session_data()
             st.rerun()
         st.markdown("---")
-        st.markdown("**Includes**")
+        st.markdown("**Primary task**")
         st.markdown(
             """
-- Taxonomy classification  
-- MSV-ready keywords  
-- Peak popularity & seasonality  
-- Excel export  
+- Generate keywords from titles  
+- Fast mode, no API key  
+- Quality mode with your Gemini key  
             """
         )
 
+    render_primary_task()
+    render_custom_divider()
     render_quick_stats()
     render_phase_overview()
     render_getting_started()

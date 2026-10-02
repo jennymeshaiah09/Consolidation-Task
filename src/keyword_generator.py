@@ -100,28 +100,28 @@ def extract_entities(client, product_title: str) -> Dict[str, str]:
     Raises exceptions on API errors so caller can handle them.
     """
     prompt = f"""
-    Analyze the following alcohol product title and extract entities into a JSON object.
+    Analyze the following product title and extract entities into a JSON object.
+    The catalog may be any vertical, not only drinks.
 
     Product Title: "{product_title}"
 
     Format: JSON
     Fields to Extract:
-    - brand: (The user-facing brand, e.g., "Porta 6", "Chateau Batailley", "Jack Daniel's". NOT the generic parent company if hidden. Keep numbers!)
-    - product_name: (The specific product name or sub-brand. e.g. "Blue Label", "Nastro Azzurro", "Cordon Rouge". If none, use generic like "Red Wine" or "Lager")
-    - vintage: (Year, e.g., "2016", "NV" if non-vintage but explicitly stated, else null. MUST look like a year.)
-    - age_statement: (Numeric age, e.g., "12", "15", "18". Extract ONLY the number. Do NOT include "Year Old" or "Years".)
-    - product_type: (The broad category, e.g., "Whisky", "Gin", "Liqueur", "Rum", "Vodka". Extract the simple type, e.g. "Whisky" not "Single Malt Whisky".)
-    - region: (e.g., "Pauillac", "Bordeaux", "Lisbon")
-    - varietal: (e.g., "Malbec", "Primitivo", "Cabernet Sauvignon")
-    - pack_format: (e.g., "Case of 6", "Gift Set", "Magnum". Look for "case", "6x", "12x", "gift". Leave null if single bottle.)
-    - collection: (e.g., "Chosen by Majestic", "Definition")
+    - brand: (The shopper-facing brand. Keep numbers that are part of the name.)
+    - product_name: (The specific product or model. If none, use a short product type.)
+    - vintage: (A year only when the title states one, else null.)
+    - age_statement: (A numeric age such as "12" when the title states one, else null.)
+    - product_type: (A short type such as "Kettle", "Lamp", "Whisky", or "Socks".)
+    - region: (A place name when it identifies the product, else null.)
+    - varietal: (A variety or material that identifies the product, else null.)
+    - pack_format: (Pack, case, or gift language, else null.)
+    - collection: (A named line, else null. Ignore retailer labels.)
 
     Rules:
-    1. Be precise. Do not hallucinate. If a field is not present, set it to null.
-    2. Extract "Vintage" only if it looks like a year (19xx, 20xx).
-    3. "Prosecco", "Champagne", "Cava" are REGIONS (or protected designations), not just varietals.
-    4. For "Age", extract ONLY the number (e.g., "12" from "12 Year Old").
-    
+    1. Be precise. If a field is not present, set it to null.
+    2. Vintage must look like a year (19xx or 20xx).
+    3. Do not invent a brand or type that is not in the title.
+
     Return ONLY JSON.
     """
 

@@ -49,7 +49,7 @@ def main():
     # API Key Check
     if not validate_api_key():
         render_info_banner(
-            "⚠️ Google API key not configured. Set GOOGLE_API_KEY environment variable.",
+            "Paste a Gemini API key in the sidebar to verify keywords.",
             "warning"
         )
         return

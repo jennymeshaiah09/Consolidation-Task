@@ -19,6 +19,7 @@ from src.llm_keywords import (
 )
 from src.keyword_generator import verify_keywords_bulk
 from src.rake_keywords import generate_keywords_rake
+from src.chat_models import provider_api_key
 from src.normalization import create_product_key
 
 # Import UI utilities
@@ -30,6 +31,7 @@ from utils.ui_components import (
     render_custom_divider,
     render_info_banner,
     render_header_navigation,
+    render_model_picker,
     render_summary_section
 )
 from utils.state_manager import (
@@ -143,7 +145,7 @@ def render_keyword_generation():
         "Keyword Generation Mode",
         options=["⚡ Fast (RAKE)", "🧠 Quality (LLM)", "📤 Upload CSV"],
         horizontal=True,
-        help="RAKE is instant but less accurate. LLM is slower but produces better keywords. Upload imports a pre-filled file (keywords + optional MSV).",
+        help="Fast (RAKE) is the default and needs no API key. Quality (LLM) uses the Gemini key in the sidebar. Upload imports a file that already has keywords.",
         label_visibility="collapsed"
     )
     use_rake  = mode == "⚡ Fast (RAKE)"
@@ -328,37 +330,27 @@ def render_keyword_generation():
         return  # upload mode handled — skip RAKE / LLM UI below
     # ------------------------------------------------------------------------
 
+    provider, model_name = "Gemini", "gemini-2.5-flash-lite"
     if use_rake:
         st.info("⚡ **RAKE Mode**: Instant keyword extraction using NLP. No API calls needed!")
     else:
-        # API Key status for LLM mode
-        if not validate_api_key():
+        provider, model_name = render_model_picker("phase2")
+        if not provider_api_key(provider):
             render_info_banner(
-                "⚠️ Google API key not configured. Set GOOGLE_API_KEY environment variable or use RAKE mode.",
+                f"Add a {provider} API key, or stay on Fast (RAKE).",
                 "warning"
             )
-
-            st.markdown("""
-            **How to configure LLM mode:**
-            1. Get your API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
-            2. Create a `.env` file in the project root
-            3. Add: `GOOGLE_API_KEY=your_key_here`
-            4. Restart the application
-            
-            **Or use RAKE mode above for instant results without API!**
-            """)
             return
 
-        # API connection test (only for LLM mode)
-        st.success("✅ Google Gemini API Key configured")
+        st.success(f"{provider} · {model_name}")
 
-        if st.button("🔍 Test API Connection"):
+        if provider == "Gemini" and st.button("Test API connection"):
             with st.spinner("Testing connection..."):
-                success, message = test_api_connection()
+                success, message = test_api_connection(model_name)
                 if success:
-                    st.success(f"✅ {message}")
+                    st.success(message)
                 else:
-                    st.error(f"❌ {message}")
+                    st.error(message)
 
     st.markdown("---")
 
@@ -421,7 +413,9 @@ def render_keyword_generation():
                         consolidated_df,
                         product_type,
                         progress_callback=update_progress,
-                        max_products=max_products
+                        max_products=max_products,
+                        model_name=model_name,
+                        provider=provider,
                     )
 
             if trial_mode and max_products:
@@ -582,6 +576,108 @@ def render_export_section():
     )
 
 
+def _titles_to_frame(titles: list[str]) -> pd.DataFrame:
+    cleaned = [title.strip() for title in titles if str(title).strip()]
+    return pd.DataFrame({"Product Title": cleaned, "Product Brand": ""})
+
+
+def render_standalone_keywords():
+    """Generate keywords from titles only, without the monthly catalog."""
+    st.markdown("### Create keywords separately")
+    render_info_banner(
+        "This does not use the monthly catalog. Paste product titles, or upload a CSV or Excel file with a Title column."
+    )
+
+    pasted = st.text_area(
+        "Product titles",
+        placeholder="One title per line\nCedar Pour Over Kettle\nWireless Desk Lamp",
+        height=140,
+    )
+    uploaded = st.file_uploader(
+        "Or upload a title list",
+        type=["csv", "xlsx"],
+        help="Needs a Title or Product Title column. Brand is optional.",
+    )
+
+    mode = st.radio(
+        "Method",
+        options=["Fast (RAKE)", "Quality (LLM)"],
+        horizontal=True,
+        help="Fast runs locally. Quality uses Gemini, OpenAI, or Claude.",
+    )
+    provider, model_name = "Gemini", "gemini-2.5-flash-lite"
+    if mode == "Quality (LLM)":
+        provider, model_name = render_model_picker("standalone")
+
+    if st.button("Generate keywords", type="primary"):
+        frame = None
+        if uploaded is not None:
+            source = (
+                pd.read_csv(uploaded)
+                if uploaded.name.endswith(".csv")
+                else pd.read_excel(uploaded)
+            )
+            rename = {}
+            for col in source.columns:
+                lowered = str(col).strip().lower()
+                if lowered in {"title", "product title", "name", "product name"}:
+                    rename[col] = "Product Title"
+                elif lowered in {"brand", "product brand"}:
+                    rename[col] = "Product Brand"
+            source = source.rename(columns=rename)
+            if "Product Title" not in source.columns:
+                st.error("The file needs a Title or Product Title column.")
+                return
+            if "Product Brand" not in source.columns:
+                source["Product Brand"] = ""
+            frame = source[["Product Title", "Product Brand"]].copy()
+        else:
+            frame = _titles_to_frame(pasted.splitlines())
+
+        if frame is None or frame.empty:
+            st.error("Add at least one product title.")
+            return
+
+        try:
+            if mode == "Fast (RAKE)":
+                with st.spinner("Generating keywords..."):
+                    result = generate_keywords_rake(frame)
+            else:
+                if not provider_api_key(provider):
+                    st.error(f"Add a {provider} API key, or use Fast (RAKE).")
+                    return
+                with st.spinner(f"Generating keywords with {provider} · {model_name}..."):
+                    result = generate_keywords_batch(
+                        frame,
+                        product_type=st.session_state.get("product_type") or "General",
+                        model_name=model_name,
+                        provider=provider,
+                    )
+        except Exception as exc:
+            st.error(f"Keyword generation failed: {exc}")
+            return
+
+        st.success(f"Generated keywords for {len(result)} products.")
+        st.dataframe(
+            result[["Product Title", "Product Keyword"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+        output = BytesIO()
+        result.to_excel(output, index=False, sheet_name="Keywords")
+        output.seek(0)
+        st.download_button(
+            "Download keywords",
+            data=output,
+            file_name="keywords.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    st.caption("The Keyword Generator page also offers Hybrid and Advanced methods.")
+    if st.button("Open the full keyword generator"):
+        st.switch_page("pages/06_Keyword_Generator.py")
+
+
 def main():
     """Main page rendering"""
 
@@ -591,7 +687,7 @@ def main():
     # Page header
     render_page_header(
         title="Keywords & categories",
-        subtitle="Generate MSV-ready search phrases and review taxonomy classification.",
+        subtitle="Generate search phrases from a title list, or from a consolidated catalog.",
     )
 
     # Progress tracker
@@ -603,19 +699,10 @@ def main():
     # Check prerequisites
     is_ready, message = check_phase_prerequisites(2)
 
-    if not is_ready:
-        st.error(message)
-        st.info("👈 Go back to Phase 1 to upload and consolidate your data first.")
-
-        if st.button("← Back to Phase 1"):
-            st.switch_page("pages/01_Consolidate.py")
-        return
-
-    # Main content
     consolidated_df = get_consolidated_df()
 
-    if consolidated_df is None:
-        st.error("No data available. Please complete Phase 1 first.")
+    if not is_ready or consolidated_df is None:
+        render_standalone_keywords()
         return
 
     # Display current data info

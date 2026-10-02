@@ -48,16 +48,17 @@ from utils.ui_components import (
     render_header_navigation,
     render_page_header,
     render_info_banner,
+    render_model_picker,
 )
 
 apply_custom_css()
 render_header_navigation(current_page="Generator")
 render_page_header(
     title="Keyword generator",
-    subtitle="Extract MSV-ready search phrases with Hybrid, RAKE, Advanced, or Gemini methods.",
+    subtitle="The main task. Turn product titles into short search phrases.",
 )
 render_info_banner(
-    "Optimized for 2–4 word keywords. Strips sizes, ABV, vintages, gift language, and retailer noise."
+    "Fast methods run locally. Quality mode uses the Gemini key in the sidebar. Aim for 2–4 words a shopper would type."
 )
 
 # Sidebar options
@@ -87,16 +88,24 @@ max_words = st.sidebar.slider(
 )
 
 # Model selector (only shown for LLM/Advanced method)
-if method in ["LLM (API)", "Advanced (Entity + Template)"]:
+provider = "Gemini"
+if method == "LLM (API)":
     st.sidebar.divider()
-    st.sidebar.markdown("### 🤖 LLM Settings")
-    
-    llm_model = st.sidebar.selectbox(
-        "Gemini Model",
-        ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemma-3-4b-it"],
-        index=0
+    st.sidebar.markdown("### Model")
+    provider, llm_model = render_model_picker(
+        "generator", include_gemini_key=True, sidebar=True
     )
-    
+elif method == "Advanced (Entity + Template)":
+    st.sidebar.divider()
+    st.sidebar.markdown("### Model")
+    st.sidebar.caption("Advanced extraction uses Gemini. Choose LLM (API) for OpenAI or Claude.")
+    llm_model = st.sidebar.selectbox(
+        "Gemini model",
+        ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+        key="advanced_gemini_model",
+    )
+
+if method in ["LLM (API)", "Advanced (Entity + Template)"]:
     batch_size = st.sidebar.slider(
         "Batch Size",
         min_value=10,
@@ -533,7 +542,8 @@ if uploaded_file:
                             batch_size=10,
                             delay_between_batches=0.0,
                             model_name=llm_model,
-                            max_products=10
+                            max_products=10,
+                            provider=provider,
                         )
                         filled = trial_df['Product Keyword'].astype(str).str.strip().ne('').sum()
                         blank = 10 - filled
@@ -685,7 +695,7 @@ if uploaded_file:
             else:
                 # LLM extraction
                 if not validate_api_key():
-                    st.error("❌ GOOGLE_API_KEY not set. Please add it to your .env file.")
+                    st.error("Add a Gemini API key in the sidebar to use the LLM method.")
                     st.stop()
                 
                 status_text.text(f"Connecting to Gemini API ({llm_model})...")
@@ -711,7 +721,8 @@ if uploaded_file:
                         delay_between_batches=api_delay,
                         model_name=llm_model,
                         max_products=max_prods,
-                        max_workers=batch_size  # Use batch_size as proxy for workers or limit to 5-10
+                        max_workers=min(batch_size, 5),
+                        provider=provider,
                     )
                     status_text.text(f"✅ Generated keywords with {llm_model}")
                 except Exception as e:
